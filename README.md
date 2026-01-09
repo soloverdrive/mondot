@@ -44,5 +44,5 @@ unit demo {
 ## License
 
 MIT License.  
-Copyright (c) 2026 Solever.  
+Copyright (c) 2026 solever.  
 MIT License. See [LICENSE](LICENSE) for details.
