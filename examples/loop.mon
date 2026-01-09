@@ -1,0 +1,13 @@
+unit loop
+{
+    on void main()
+        number x = 100000
+        print("start")
+        
+        while (x > 0)
+            print(x)
+            x = x - 1
+        end
+        print("end")
+    end
+}

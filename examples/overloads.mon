@@ -1,0 +1,19 @@
+unit overloads
+{
+    on string first(a: string, b: string) return a end
+
+    on number first(a: number, b: number) return a end
+
+    on number func() print(1) end
+    on string func() print("b") end
+
+    on void main()
+        number a = first(1, 2)
+        string b = first("a", "b")
+        print(a)
+        print(b)
+
+        number res = func()
+        string res2 = func()
+    end
+}

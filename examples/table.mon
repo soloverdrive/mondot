@@ -1,0 +1,9 @@
+unit table
+{
+    on void main()
+        table a = {1, {1, 2, 3}, "b"}
+
+        number access = 2
+        print(a[access][access])
+    end
+}

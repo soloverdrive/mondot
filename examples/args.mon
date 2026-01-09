@@ -1,0 +1,13 @@
+unit args
+{
+    on string f(a: string)
+        return a
+    end
+
+    on void main()
+        string a = f("hello")
+        print(a)
+        string b = f("hi")
+        print(b)
+    end
+}
