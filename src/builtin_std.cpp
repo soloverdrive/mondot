@@ -59,6 +59,15 @@ namespace {
         return Value::make_nil();
     }
 
+    Value builtin_len_string(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
+        if (argc < 1) return Value::make_nil();
+        const Value& v = argv[0];
+        if (!(v.is_obj() && v.as_obj()->type == OBJ_STRING)) return Value::make_nil();
+        ObjString* s = (ObjString*)v.as_obj();
+        int64_t len = (int64_t)s->str.size();
+        return Value::make_int(len);
+    }
+
     Value builtin_print_array(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
         if (argc < 1) { std::cout << "[]\n"; return Value::make_nil(); }
         const Value& v = argv[0];
@@ -94,6 +103,7 @@ void register_default_builtins() {
     BuiltinRegistry::register_builtin("print", &builtin_print_string, nullptr, TY_VOID, {TY_STRING});
     BuiltinRegistry::register_builtin("print", &builtin_print_number, nullptr, TY_VOID, {TY_NUMBER});
     BuiltinRegistry::register_builtin("print", &builtin_print_array, nullptr, TY_VOID, {TY_ARRAY});
+    BuiltinRegistry::register_builtin("len", &builtin_len_string, nullptr, TY_NUMBER, {TY_STRING});
     BuiltinRegistry::register_builtin("sin", &builtin_sin_1, nullptr, TY_NUMBER, {TY_NUMBER});
     BuiltinRegistry::register_builtin("cos", &builtin_cos_1, nullptr, TY_NUMBER, {TY_NUMBER});
 }
