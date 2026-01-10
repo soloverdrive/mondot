@@ -1,4 +1,4 @@
-TARGET := solev
+TARGET := mondot
 
 CXX := g++
 CXX_STANDARD := -std=c++20

@@ -4,10 +4,11 @@
 #include <fstream>
 #include <iostream>
 #include <cstring>
+#include "facts.h"
 
 static constexpr uint8_t FILE_TAG_FUNC = 0x10;
 
-void BytecodeIO::save(const std::string& filename, Assembler& as) {
+void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisual) {
     std::ofstream out(filename, std::ios::binary);
     if (!out) throw std::runtime_error("It was not possible to create a file " + filename);
     const char magic[] = "MDOT";
@@ -66,6 +67,12 @@ void BytecodeIO::save(const std::string& filename, Assembler& as) {
     out.write((char*)&n_code, sizeof(size_t));
     out.write((char*)as.code.data(), n_code * sizeof(Instr));
     std::cout << "Compiled successfully for " << filename << std::endl;
+
+    if (alsoVisual) {
+        std::string txtfile = filename + ".txt";
+        save_text(txtfile, as);
+        std::cout << "Saved readable dump to " << txtfile << std::endl;
+    }
 }
 
 void BytecodeIO::load(const std::string& filename, Assembler& as) {
@@ -131,4 +138,77 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
     in.read((char*)&n_code, sizeof(size_t));
     as.code.resize(n_code);
     in.read((char*)as.code.data(), n_code * sizeof(Instr));
+}
+
+std::string BytecodeIO::escape_string(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        if (c == '\\') { out += "\\\\"; }
+        else if (c == '\"') { out += "\\\""; }
+        else if (c == '\n') { out += "\\n"; }
+        else if (c == '\r') { out += "\\r"; }
+        else if (c == '\t') { out += "\\t"; }
+        else if (std::isprint(c)) { out.push_back(c); }
+        else {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "\\x%02x", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+std::string BytecodeIO::instr_to_string(const Instr& i) {
+    std::string s = opcode_to_string(i.op);
+    s += " a=" + std::to_string((int)i.a);
+    s += " b=" + std::to_string((int)i.b);
+    s += " c=" + std::to_string((int)i.c);
+    return s;
+}
+
+void BytecodeIO::save_text(const std::string& filename_txt, Assembler& as) {
+    std::ofstream out(filename_txt);
+    if (!out) {
+        std::cerr << "Warning: could not create text dump " << filename_txt << std::endl;
+        return;
+    }
+
+    out << "CONSTANTS (" << as.constants.size() << ")\n";
+    for (size_t i = 0; i < as.constants.size(); ++i) {
+        const Value& v = as.constants[i];
+        out << i << " -> ";
+        if (v.is_num()) {
+            out << "NUM " << v.as_intscaled();
+        } else if (v.is_bool()) {
+            out << "BOOL " << (v.as_bool() ? "true" : "false");
+        } else if (v.is_nil()) {
+            out << "NIL";
+        } else if (v.is_obj()) {
+            Obj* o = v.as_obj();
+            if (o->type == OBJ_STRING)
+                out << "STRING \"" << escape_string(((ObjString*)o)->str) << "\"";
+            else if (o->type == OBJ_FUNCTION) {
+                ObjFunction* of = (ObjFunction*)o;
+                out << "FUNC ";
+                if (of->builtin_id >= 0) out << "[builtin#" << of->builtin_id << "]";
+                out << of->name << " -> ret=" << (int)of->return_type << " params=";
+                for (size_t k = 0; k < of->param_types.size(); ++k) {
+                    if (k) out << ",";
+                    out << (int)of->param_types[k];
+                }
+            } else
+                out << "OBJ(type=" << (int)o->type << ")";
+        } else
+            out << "UNKNOWN_CONST";
+        
+        out << "\n";
+    }
+
+    out << "\n";
+    for (size_t pc = 0; pc < as.code.size(); ++pc) {
+        const Instr& ins = as.code[pc];
+        out<< pc << "; " << instr_to_string(ins) << "\n";
+    }
+
+    out << std::flush;
 }

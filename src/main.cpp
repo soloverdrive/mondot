@@ -36,7 +36,7 @@ int main(int argc, char* argv[])
         try {
             Compiler comp(buffer.str());
             comp.compile_unit(&sm);
-            BytecodeIO::save(output_file, comp.asm_);
+            BytecodeIO::save(output_file, comp.asm_, true);
         } catch (std::exception& e) {
             return 1;
         }
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
             vm.run();
         } catch (std::exception& e) {
             return 1;
-        }
+        } 
         return 0;
     } else {
         std::ifstream f(mode);
