@@ -12,18 +12,18 @@ static constexpr uint64_t INTSCALED_ONE = (1ULL << INTSCALED_SHIFT);
 
 struct Obj;
 struct ObjString;
-struct ObjArray;
+struct ObjList;
 struct ObjTable;
 struct ObjFunction;
 
-enum TypeKind { TY_UNKNOWN=0, TY_VOID=1, TY_NUMBER=2, TY_STRING=3, TY_BOOL=4, TY_ARRAY=5, TY_TABLE=6 };
+enum TypeKind { TY_UNKNOWN=0, TY_VOID=1, TY_NUMBER=2, TY_STRING=3, TY_BOOL=4, TY_LIST=5, TY_TABLE=6 };
 
 inline TypeKind parse_type_name(const std::string& s) {
     if (s == "void") return TY_VOID;
     if (s == "number") return TY_NUMBER;
     if (s == "string") return TY_STRING;
     if (s == "bool") return TY_BOOL;
-    if (s == "array") return TY_ARRAY;
+    if (s == "list") return TY_LIST;
     if (s == "table") return TY_TABLE;
     return TY_UNKNOWN;
 }
@@ -57,7 +57,7 @@ struct Value {
     Obj* as_obj() const { return reinterpret_cast<Obj*>(raw & ~7ULL); }
 };
 
-enum ObjType { OBJ_STRING=1, OBJ_ARRAY=2, OBJ_TABLE=3, OBJ_FUNCTION=4 };
+enum ObjType { OBJ_STRING=1, OBJ_LIST=2, OBJ_TABLE=3, OBJ_FUNCTION=4 };
 
 struct Obj {
     int type;
@@ -69,9 +69,9 @@ struct ObjString : Obj {
     std::string str;
     ObjString(std::string s): Obj(OBJ_STRING), str(std::move(s)) {}
 };
-struct ObjArray : Obj {
+struct ObjList : Obj {
     std::vector<Value> elements;
-    ObjArray(): Obj(OBJ_ARRAY) {}
+    ObjList(): Obj(OBJ_LIST) {}
 };
 struct ObjTable : Obj {
     std::vector<std::pair<Value, Value>> entries;
@@ -107,7 +107,7 @@ inline TypeKind type_of_value(const Value& v) {
         Obj* o = v.as_obj();
         if (!o) return TY_UNKNOWN;
         if (o->type == OBJ_STRING) return TY_STRING;
-        if (o->type == OBJ_ARRAY) return TY_ARRAY;
+        if (o->type == OBJ_LIST) return TY_LIST;
         if (o->type == OBJ_TABLE) return TY_TABLE;
     }
     return TY_UNKNOWN;

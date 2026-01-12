@@ -1,6 +1,5 @@
 #include "builtin_registry.h"
 #include <mutex>
-#include <algorithm>
 
 static std::vector<BuiltinEntry> g_builtin_entries;
 static std::mutex g_builtin_mutex;

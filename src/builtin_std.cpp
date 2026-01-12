@@ -1,6 +1,6 @@
 #include "builtin_std.h"
 #include "builtin_registry.h"
-#include "builtin_bindings.h" // unused
+// #include "builtin_bindings.h" // unused
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -20,8 +20,8 @@ namespace {
             return out;
         }
         if (v.is_bool()) return v.as_bool() ? "true" : "false";
-        if (v.is_obj() && v.as_obj()->type == OBJ_ARRAY) {
-            ObjArray* a = (ObjArray*)v.as_obj();
+        if (v.is_obj() && v.as_obj()->type == OBJ_LIST) {
+            ObjList* a = (ObjList*)v.as_obj();
             std::string s = "[";
             for (size_t i = 0; i < a->elements.size() && i < 8; ++i) {
                 if (i) s += ", ";
@@ -71,8 +71,8 @@ namespace {
     Value builtin_print_array(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
         if (argc < 1) { std::cout << "[]\n"; return Value::make_nil(); }
         const Value& v = argv[0];
-        if (!(v.is_obj() && v.as_obj()->type == OBJ_ARRAY)) { std::cout << "nil\n"; return Value::make_nil(); }
-        ObjArray* arr = (ObjArray*)v.as_obj();
+        if (!(v.is_obj() && v.as_obj()->type == OBJ_LIST)) { std::cout << "nil\n"; return Value::make_nil(); }
+        ObjList* arr = (ObjList*)v.as_obj();
         std::cout << "[";
         for (size_t i = 0; i < arr->elements.size(); ++i) {
             if (i) std::cout << ", ";
@@ -102,7 +102,7 @@ namespace {
 void register_default_builtins() {
     BuiltinRegistry::register_builtin("print", &builtin_print_string, nullptr, TY_VOID, {TY_STRING});
     BuiltinRegistry::register_builtin("print", &builtin_print_number, nullptr, TY_VOID, {TY_NUMBER});
-    BuiltinRegistry::register_builtin("print", &builtin_print_array, nullptr, TY_VOID, {TY_ARRAY});
+    BuiltinRegistry::register_builtin("print", &builtin_print_array, nullptr, TY_VOID, {TY_LIST});
     BuiltinRegistry::register_builtin("len", &builtin_len_string, nullptr, TY_NUMBER, {TY_STRING});
     BuiltinRegistry::register_builtin("sin", &builtin_sin_1, nullptr, TY_NUMBER, {TY_NUMBER});
     BuiltinRegistry::register_builtin("cos", &builtin_cos_1, nullptr, TY_NUMBER, {TY_NUMBER});

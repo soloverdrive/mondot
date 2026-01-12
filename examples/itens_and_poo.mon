@@ -1,0 +1,25 @@
+unit minimal
+{
+    item channel
+        string name
+        number subs
+        list<video> videos
+    end
+
+    item video
+        string title
+        string description
+        number likes
+    end
+
+    on void upload(this: channel, content: video)
+        this.videos.append(content)
+    end
+
+    on void main()
+        channel my_channel = create("my channel", 120, create())
+
+        video video1 = create("first video", "this is the first video", 1438)
+        upload(my_channel, video1)
+    end
+}

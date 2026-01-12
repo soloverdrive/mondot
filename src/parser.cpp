@@ -1,6 +1,5 @@
 #include "parser.h"
 #include "compiler.h"
-#include <sstream>
 #include <iostream>
 #include <cctype>
 #include <stdexcept>
@@ -163,7 +162,7 @@ std::pair<int, TypeKind> Parser::compile_atom() {
     // array literal: [ expr, expr, ... ]  -> runtime construction via OP_TABLE_NEW/SET
     if (curr_.k == TK::LBRACK) {
         advance();
-        int dest = owner_->define_local("", TY_ARRAY);
+        int dest = owner_->define_local("", TY_LIST);
         owner_->asm_.emit(OP_TABLE_NEW, line, dest);
         int elem_index = 0;
         if (curr_.k != TK::RBRACK) {
@@ -178,7 +177,7 @@ std::pair<int, TypeKind> Parser::compile_atom() {
         }
         if (curr_.k == TK::RBRACK) advance();
         else consume(TK::RBRACK, "Expected ']'");
-        return {dest, TY_ARRAY};
+        return {dest, TY_LIST};
     }
 
     // Table literal: { val, key: val, ... } -> runtime construction

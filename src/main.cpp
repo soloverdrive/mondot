@@ -9,7 +9,7 @@
 
 void print_help() {
     std::cout << "MonDot Compiler & VM\n";
-    std::cout << "Uso:\n";
+    std::cout << "Usage:\n";
     std::cout << "  mondot build <file.mon> -o <output.mdotc>\n";
     std::cout << "  mondot run <file.mdotc>\n";
     std::cout << "  mondot <file.mon> (compiles and runs on memory)\n";
@@ -30,7 +30,7 @@ int main(int argc, char* argv[])
         std::string input_file = argv[2];
         std::string output_file = argv[4];
         std::ifstream f(input_file);
-        if (!f) { std::cerr << "Erro ao abrir " << input_file << std::endl; return 1; }
+        if (!f) { std::cerr << "Error when opening " << input_file << std::endl; return 1; }
         std::stringstream buffer; buffer << f.rdbuf();
         SourceManager sm(buffer.str(), input_file);
         try {

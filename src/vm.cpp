@@ -1,6 +1,4 @@
 #include "vm.h"
-#include <iostream>
-#include <iomanip>
 #include <cmath>
 #include "builtin_registry.h"
 
