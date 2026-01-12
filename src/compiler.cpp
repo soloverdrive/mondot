@@ -1,9 +1,6 @@
 #include "compiler.h"
 #include "parser.h"
-#include "bytecode_io.h"
-#include "vm.h"
 #include "source_manager.h"
-#include <iostream>
 
 #include "builtin_registry.h"
 
