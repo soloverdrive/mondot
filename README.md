@@ -1,8 +1,10 @@
-# Solev — Mondot Compiler & VM
+# Mondot — Mondot Compiler & VM
 
 This programming language was designed to have a relatively simple syntax, with unit-based code organization.
 
 It's still under development, may contain security flaws and other issues.
+
+You can see the language specifications at [mondot-syntax](https://github.com/soloverdrive/mondot-syntax).
 
 ## Build
 
@@ -14,13 +16,13 @@ make
 
 ```bash
 # run a source file
-./solev ./examples/overloads.mon
+./mondot ./examples/overloads.mon
 
 # build bytecode
-./solev build input.mon -o output.mdotc
+./mondot build input.mon -o output.mdotc
 
 # run bytecode
-./solev run output.mdotc
+./mondot run output.mdotc
 ```
 
 ## Quick syntax
