@@ -98,6 +98,14 @@ void Parser::prescan_functions() {
     }
 }
 
+std::pair<TypeKind,int> Parser::resolve_type_name(const std::string &s) {
+    TypeKind tk = parse_type_name(s);
+    if (tk != TY_UNKNOWN) return {tk, -1};
+    int id = owner_->find_item_id_by_name(s);
+    if (id >= 0) return {TY_ITEM, id};
+    return {TY_UNKNOWN, -1};
+}
+
 std::pair<int, TypeKind> Parser::compile_expr(int min_prec) {
     auto left_pair = compile_atom();
     int left = left_pair.first; TypeKind left_t = left_pair.second;
@@ -249,14 +257,25 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                 int r = owner_->load_const(Value::make_nil(), line);
                 return {r, TY_UNKNOWN};
             }
+            if (fs->user_return_type_id >= 0) {
+                int itemid = fs->user_return_type_id;
+                int dest = owner_->define_local("", TY_ITEM, itemid);
+
+                owner_->asm_.emit(OP_STRUCT_NEW, line, dest, itemid, (int)owner_->get_item_fields(itemid).size());
+
+                const auto &fields = owner_->get_item_fields(itemid);
+                for (size_t i = 0; i < arg_regs.size() && i < fields.size(); ++i) {
+                    // a = struct_reg, b = field_index, c = value_reg
+                    owner_->asm_.emit(OP_STRUCT_SET, line, dest, (int)i, arg_regs[i]);
+                }
+
+                return {dest, TY_ITEM};
+            }
             if (fs->is_builtin) {
-                // Resolve builtin id quando possível (fallback -1)
                 int bid = BuiltinRegistry::lookup_name(fs->name);
-                // Cria um ObjFunction como constante — evita emitir OP_CALL com label -1
                 ObjFunction* of = new ObjFunction(bid, fs->return_type, fs->param_types, fs->name);
                 int func_reg = owner_->load_const(Value::make_obj(of), line);
 
-                // preparar destino e argumentos (mesma lógica do emit_call_helper)
                 int dest = owner_->define_local("", fs->return_type);
                 std::vector<int> call_arg_slots;
                 call_arg_slots.reserve(arg_regs.size());
@@ -269,7 +288,6 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                 for (size_t i = 0; i < arg_regs.size(); ++i)
                     owner_->asm_.emit(OP_MOVE, line, call_arg_slots[i], arg_regs[i]);
 
-                // emitir OP_CALL_OBJ: a = dest_rel, b = func_reg (relative), c = argc
                 owner_->asm_.emit(OP_CALL_OBJ, line, dest, func_reg, (int)arg_regs.size());
                 return {dest, fs->return_type};
             }
@@ -318,16 +336,34 @@ std::pair<int, TypeKind> Parser::compile_atom() {
             return {r, TY_UNKNOWN};
         }
 
-        int tmp = owner_->define_local("", owner_->locals_[loc].type);
+        int tmp = owner_->define_local("", owner_->locals_[loc].type, owner_->locals_[loc].user_type_id);
         owner_->asm_.emit(OP_MOVE, line, tmp, loc);
 
-        // member/index access loop
         while (true) {
             if (curr_.k == TK::DOT) {
                 advance();
                 if (curr_.k == TK::IDENT) {
                     std::string member = curr_.lex;
                     advance();
+
+                    int base_user_id = -1;
+                    if (tmp >= 0 && tmp < (int)owner_->locals_.size()) base_user_id = owner_->locals_[tmp].user_type_id;
+
+                    if (base_user_id >= 0) {
+                        const auto &fields = owner_->get_item_fields(base_user_id);
+                        int found_idx = -1;
+                        TypeKind field_type = TY_UNKNOWN;
+                        for (size_t fi = 0; fi < fields.size(); ++fi) {
+                            if (fields[fi].first == member) { found_idx = (int)fi; field_type = fields[fi].second; break; }
+                        }
+                        if (found_idx >= 0) {
+                            int dest = owner_->define_local("", field_type);
+                            owner_->asm_.emit(OP_STRUCT_GET, line, dest, tmp, found_idx);
+                            tmp = dest;
+                            continue;
+                        }
+                    }
+
                     ObjString* s = new ObjString(member);
                     int keyreg = owner_->load_const(Value::make_obj(s), line);
                     int dest = owner_->define_local("", TY_UNKNOWN);
@@ -414,8 +450,10 @@ void Parser::compile_unit(SourceManager* sm) {
                 owner_->push_diag("Expected return type after 'on'", {curr_.line, curr_.col, (int)curr_.lex.size()}, "");
                 break;
             }
-            TypeKind rett = parse_type_name(curr_.lex);
-            if (rett == TY_UNKNOWN) owner_->push_diag("Unknown return type: " + curr_.lex, {curr_.line, curr_.col, (int)curr_.lex.size()}, "");
+
+            std::string rett_tok = curr_.lex;
+            auto [rett_kind, rett_user_id] = resolve_type_name(rett_tok);
+            if (rett_kind == TY_UNKNOWN) owner_->push_diag("Unknown return type: " + rett_tok, {curr_.line, curr_.col, (int)curr_.lex.size()}, "");
             advance();
 
             if (curr_.k != TK::IDENT) {
@@ -435,10 +473,11 @@ void Parser::compile_unit(SourceManager* sm) {
             }
             if (chosen == -1) {
                 chosen = owner_->asm_.make_label();
-                FunctionSig fs; fs.name = fname; fs.label_id = chosen; fs.return_type = rett; fs.declared_line = curr_.line;
+                FunctionSig fs; fs.name = fname; fs.label_id = chosen; fs.return_type = rett_kind; fs.declared_line = curr_.line;
+                fs.user_return_type_id = rett_user_id;
                 owner_->function_table_[fname].push_back(fs);
-            }
-            else for (auto &fs : owner_->function_table_[fname]) if (fs.label_id == chosen) fs.return_type = rett;
+            } else
+                for (auto &fs : owner_->function_table_[fname]) if (fs.label_id == chosen) { fs.return_type = rett_kind; fs.user_return_type_id = rett_user_id; break; }
 
             owner_->asm_.bind_label(chosen);
             owner_->current_function_ = fname;
@@ -446,6 +485,7 @@ void Parser::compile_unit(SourceManager* sm) {
             consume(TK::LP, "Expected '(' token after function name");
             std::vector<std::string> pnames;
             std::vector<TypeKind> ptypes;
+            std::vector<int> puserids;
             if (curr_.k != TK::RP) {
                 while (true) {
                     if (curr_.k != TK::IDENT) {
@@ -459,21 +499,34 @@ void Parser::compile_unit(SourceManager* sm) {
                         owner_->push_diag("Expected param type", {curr_.line, curr_.col, (int)curr_.lex.size()}, owner_->current_function_);
                         break;
                     }
-                    TypeKind pk = parse_type_name(curr_.lex);
-                    if (pk == TY_UNKNOWN) owner_->push_diag("Unknown type for the param: " + curr_.lex, {curr_.line,curr_.col,(int)curr_.lex.size()}, owner_->current_function_);
+
+                    std::string ptype_tok = curr_.lex;
+                    auto [pk, puid] = resolve_type_name(ptype_tok);
+                    if (pk == TY_UNKNOWN) owner_->push_diag("Unknown type for the param: " + ptype_tok, {curr_.line,curr_.col,(int)ptype_tok.size()}, owner_->current_function_);
                     advance();
                     pnames.push_back(pname);
                     ptypes.push_back(pk);
+                    puserids.push_back(puid);
+
                     if (curr_.k == TK::COMMA) { advance(); continue; }
                     break;
                 }
             }
             consume(TK::RP, "Expected ')'");
-            for (auto &fs : owner_->function_table_[fname]) if (fs.label_id == chosen) { fs.param_types = ptypes; fs.return_type = rett; break; }
+
+            for (auto &fs : owner_->function_table_[fname]) if (fs.label_id == chosen) {
+                fs.param_types = ptypes;
+                fs.return_type = rett_kind;
+                fs.user_return_type_id = rett_user_id;
+                break;
+            }
 
             {
                 ScopeGuard sg(owner_);
-                for (size_t i = 0; i < pnames.size(); ++i) owner_->define_local(pnames[i], ptypes[i]);
+                for (size_t i = 0; i < pnames.size(); ++i) {
+                    int uid = (i < puserids.size()) ? puserids[i] : -1;
+                    owner_->define_local(pnames[i], ptypes[i], uid);
+                }
 
                 if (curr_.k == TK::LBRACE) advance();
                 while (curr_.k != TK::KEY_END && curr_.k != TK::RBRACE && curr_.k != TK::END_FILE) compile_stmt();
@@ -484,6 +537,39 @@ void Parser::compile_unit(SourceManager* sm) {
             }
 
             owner_->current_function_.clear();
+            continue;
+        }
+
+        else if (curr_.k == TK::ITEM) {
+            advance();
+            if (curr_.k != TK::IDENT) { owner_->push_diag("Expected item name", {curr_.line,curr_.col,(int)curr_.lex.size()}, ""); break; }
+            std::string item_name = curr_.lex; advance();
+            std::string parent_name;
+            if (curr_.k == TK::COLON) {
+                advance();
+                if (curr_.k == TK::IDENT) { parent_name = curr_.lex; advance(); }
+            }
+            consume(TK::LP, "Expected '(' after item header");
+            std::vector<std::pair<std::string, TypeKind>> fields;
+            if (curr_.k != TK::RP) {
+                while (true) {
+                    if (curr_.k != TK::IDENT) { owner_->push_diag("Expected field type", {curr_.line,curr_.col,(int)curr_.lex.size()}, ""); break; }
+                    std::string type_tok = curr_.lex; advance();
+                    TypeKind ftk = parse_type_name(type_tok);
+                    if (ftk == TY_UNKNOWN) {
+                        int iid = owner_->find_item_id_by_name(type_tok);
+                        if (iid >= 0) ftk = TY_TABLE; else owner_->push_diag("Unknown field type: " + type_tok, {curr_.line,curr_.col,(int)type_tok.size()}, "");
+                    }
+                    if (curr_.k != TK::IDENT) { owner_->push_diag("Expected field name", {curr_.line,curr_.col,(int)curr_.lex.size()}, ""); break; }
+                    std::string fname = curr_.lex; advance();
+                    fields.push_back({fname, ftk});
+                    if (curr_.k == TK::COMMA) { advance(); continue; }
+                    break;
+                }
+            }
+            consume(TK::RP, "Expected ')'");
+            owner_->register_item_type(item_name, parent_name, fields);
+            continue;
         }
         else {
             owner_->push_diag("expected 'on <type> <func>'", {curr_.line, curr_.col, (int)curr_.lex.size()}, "");
@@ -535,20 +621,143 @@ void Parser::compile_stmt() {
         return;
     }
 
+    if (curr_.k == TK::IDENT && peek_token(1).k != TK::LP) {
+        int save_tokpos = tokpos_;
+        Token nameTok = curr_;
+        advance();
+
+        int loc = owner_->resolve_local(nameTok.lex);
+        if (loc != -1) {
+            int tmp = owner_->define_local("", owner_->locals_[loc].type, owner_->locals_[loc].user_type_id);
+            owner_->asm_.emit(OP_MOVE, line, tmp, loc);
+
+            struct ChainOp { enum Kind { DOT, LBRACK } kind; std::string member; int key_reg; };
+            std::vector<ChainOp> chain;
+
+            bool failed_parse_chain = false;
+            while (curr_.k == TK::DOT || curr_.k == TK::LBRACK) {
+                if (curr_.k == TK::DOT) {
+                    advance();
+                    if (curr_.k != TK::IDENT) { failed_parse_chain = true; break; }
+                    std::string member = curr_.lex;
+                    advance();
+                    chain.push_back({ChainOp::DOT, member, -1});
+                } else {
+                    advance();
+                    auto p = compile_expr();
+                    // 0-index
+                    int negone = owner_->load_const(Value::make_int(-1), line);
+                    owner_->asm_.emit(OP_ADD, line, p.first, p.first, negone);
+                    consume(TK::RBRACK, "Expected ']'");
+                    chain.push_back({ChainOp::LBRACK, "", p.first});
+                }
+            }
+
+            if (curr_.k == TK::ASSIGN) {
+                if (failed_parse_chain) {
+                    tokpos_ = save_tokpos;
+                    curr_ = peek_token(0);
+                    next_ = peek_token(1);
+                } else {
+                    advance();
+
+                    auto [rreg, rt] = compile_expr();
+
+                    if (chain.empty()) {
+                        owner_->asm_.emit(OP_MOVE, line, loc, rreg);
+                        return;
+                    }
+
+                    for (size_t i = 0; i + 1 < chain.size(); ++i) {
+                        ChainOp &op = chain[i];
+                        if (op.kind == ChainOp::DOT) {
+                            int base_user_id = -1;
+                            if (tmp >= 0 && tmp < (int)owner_->locals_.size()) base_user_id = owner_->locals_[tmp].user_type_id;
+                            if (base_user_id >= 0) {
+                                const auto &fields = owner_->get_item_fields(base_user_id);
+                                int found_idx = -1;
+                                TypeKind field_type = TY_UNKNOWN;
+                                for (size_t fi = 0; fi < fields.size(); ++fi) {
+                                    if (fields[fi].first == op.member) { found_idx = (int)fi; field_type = fields[fi].second; break; }
+                                }
+                                if (found_idx >= 0) {
+                                    int newtmp = owner_->define_local("", field_type);
+                                    owner_->asm_.emit(OP_STRUCT_GET, line, newtmp, tmp, found_idx);
+                                    tmp = newtmp;
+                                    continue;
+                                }
+                            }
+                            ObjString* s = new ObjString(op.member);
+                            int keyreg = owner_->load_const(Value::make_obj(s), line);
+                            int newtmp = owner_->define_local("", TY_UNKNOWN);
+                            owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, keyreg);
+                            tmp = newtmp;
+                            continue;
+                        } else {
+                            int newtmp = owner_->define_local("", TY_UNKNOWN);
+                            owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, op.key_reg);
+                            tmp = newtmp;
+                            continue;
+                        }
+                    }
+
+                    ChainOp &last = chain.back();
+                    if (last.kind == ChainOp::DOT) {
+                        int base_user_id = -1;
+                        if (tmp >= 0 && tmp < (int)owner_->locals_.size()) base_user_id = owner_->locals_[tmp].user_type_id;
+                        if (base_user_id >= 0) {
+                            const auto &fields = owner_->get_item_fields(base_user_id);
+                            int found_idx = -1;
+                            for (size_t fi = 0; fi < fields.size(); ++fi) {
+                                if (fields[fi].first == last.member) { found_idx = (int)fi; break; }
+                            }
+                            if (found_idx >= 0) {
+                                // emit OP_STRUCT_SET: struct_reg = tmp, field_index = found_idx, value = rreg
+                                owner_->asm_.emit(OP_STRUCT_SET, line, tmp, found_idx, rreg);
+                                return;
+                            }
+                        }
+                        ObjString* s = new ObjString(last.member);
+                        int keyreg = owner_->load_const(Value::make_obj(s), line);
+                        owner_->asm_.emit(OP_TABLE_SET, line, tmp, keyreg, rreg);
+                        return;
+                    } else {
+                        owner_->asm_.emit(OP_TABLE_SET, line, tmp, last.key_reg, rreg);
+                        return;
+                    }
+                }
+            } else {
+                tokpos_ = save_tokpos;
+                curr_ = peek_token(0);
+                next_ = peek_token(1);
+            }
+        } else {
+            tokpos_ = save_tokpos;
+            curr_ = peek_token(0);
+            next_ = peek_token(1);
+        }
+    }
+
     if (curr_.k == TK::IDENT && next_.k == TK::IDENT) {
         Token t3 = peek_token(2);
         if (t3.k == TK::ASSIGN) {
-            std::string type_name = curr_.lex;
+            std::string type_tok = curr_.lex;
+            auto [tk, tuid] = resolve_type_name(type_tok);
+
             std::string var_name = next_.lex;
-            TypeKind tk = parse_type_name(type_name);
             advance(); // type
             advance(); // var name
             advance(); // =
+
             TypeKind prev_expected = owner_->expected_return_;
-            owner_->expected_return_ = tk;
+            owner_->expected_return_ = (tk == TY_UNKNOWN) ? prev_expected : tk;
             auto [r, rt] = compile_expr();
             owner_->expected_return_ = prev_expected;
-            int slot = owner_->define_local(var_name, tk == TY_UNKNOWN ? rt : tk);
+
+            int user_id = -1;
+            if (tk == TY_ITEM) user_id = tuid;
+
+            int slot = owner_->define_local(var_name, (tk == TY_UNKNOWN ? rt : tk), user_id);
             owner_->asm_.emit(OP_MOVE, line, slot, r);
             return;
         }
@@ -656,7 +865,7 @@ int Parser::make_nil_const(int line) {
 }
 
 int Parser::emit_call_helper(int line, FunctionSig* fs, const std::vector<int>& arg_regs) {
-    int dest = owner_->define_local("", fs->return_type);
+    int dest = owner_->define_local("", fs->return_type, fs->user_return_type_id);
     std::vector<int> call_arg_slots;
     call_arg_slots.reserve(arg_regs.size());
     for (size_t i = 0; i < arg_regs.size(); ++i) {

@@ -1,0 +1,14 @@
+unit item_as_param
+{
+    item obj1 (string val)
+
+    on void modify(this: obj1)
+        this.val = "modified"
+    end
+
+    on void main()
+        obj1 i = create([1])
+        modify(i)
+        print(i.val)
+    end
+}

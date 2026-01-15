@@ -13,12 +13,13 @@ struct FunctionSig {
     std::string name;
     std::vector<TypeKind> param_types;
     TypeKind return_type = TY_VOID;
+    int user_return_type_id = -1;
     int label_id = -1;
     int declared_line = 0;
     bool is_builtin = false;
 };
 
-struct LocalEntry { std::string name; int depth; int slot; TypeKind type; };
+struct LocalEntry { std::string name; int depth; int slot; TypeKind type; int user_type_id; };
 class Parser;
 
 class Compiler {
@@ -31,7 +32,9 @@ public:
 
     void push_diag(const std::string &m, SourceLocation loc, const std::string &fn = "");
     int resolve_local(const std::string& name);
-    int define_local(const std::string& name, TypeKind t = TY_UNKNOWN);
+
+    int define_local(const std::string& name, TypeKind t = TY_UNKNOWN, int user_type_id = -1);
+
     int load_const(Value v, int line);
     void begin_scope();
     void end_scope();
@@ -49,5 +52,13 @@ private:
     std::string current_function_;
     TypeKind expected_return_ = TY_UNKNOWN;
 
+    struct ItemType { int id; std::string name; int parent_id; std::vector<std::pair<std::string, TypeKind>> fields; };
+    std::vector<ItemType> item_types_;
+    std::map<std::string,int> item_name_to_id_;
+
     FunctionSig* resolve_function(const std::string &name, const std::vector<TypeKind> &arg_types);
+
+    int register_item_type(const std::string &name, const std::string &parent_name, const std::vector<std::pair<std::string, TypeKind>>& fields);
+    int find_item_id_by_name(const std::string &name) const;
+    const std::vector<std::pair<std::string, TypeKind>>& get_item_fields(int id) const;
 };

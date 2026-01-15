@@ -39,6 +39,7 @@ private:
     // parsing & codegen
     void prescan_functions();
     std::pair<int, TypeKind> compile_expr(int min_prec = 0);
+    std::pair<TypeKind,int> resolve_type_name(const std::string &s);
     std::pair<int, TypeKind> compile_atom();
     void compile_stmt();
 

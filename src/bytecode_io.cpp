@@ -14,9 +14,8 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
     const char magic[] = "MDOT";
     out.write(magic, 4);
 
-    size_t n_consts = as.constants.size();
-    out.write((char*)&n_consts, sizeof(size_t));
-    for (const auto& v : as.constants) {
+    static constexpr uint8_t FILE_TAG_STRUCT = 0x11;
+    std::function<void(const Value&)> write_value = [&](const Value& v) {
         if (v.is_num()) {
             uint8_t tag = TAG_NUM;
             int64_t q = v.as_intscaled();
@@ -60,7 +59,32 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
                     out.write(of->name.c_str(), len);
                 }
             }
+            else if (o->type == OBJ_STRUCT) {
+                uint8_t tag = FILE_TAG_STRUCT;
+                out.write((char*)&tag, 1);
+                ObjStruct* os = (ObjStruct*)o;
+                int32_t itemid = os->item_type_id;
+                out.write((char*)&itemid, sizeof(int32_t));
+                uint32_t fcount = (uint32_t)os->fields.size();
+                out.write((char*)&fcount, sizeof(uint32_t));
+                for (uint32_t i = 0; i < fcount; ++i) {
+                    write_value(os->fields[i]);
+                }
+            }
+            else {
+                uint8_t tag = TAG_NIL;
+                out.write((char*)&tag, 1);
+            }
+        } else {
+            uint8_t tag = TAG_NIL;
+            out.write((char*)&tag, 1);
         }
+    };
+
+    size_t n_consts = as.constants.size();
+    out.write((char*)&n_consts, sizeof(size_t));
+    for (const auto& v : as.constants) {
+        write_value(v);
     }
 
     size_t n_code = as.code.size();
@@ -82,24 +106,28 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
     in.read(magic, 4);
     if (std::strncmp(magic, "MDOT", 4) != 0) throw std::runtime_error("Invalid file format (Magic Header)");
 
-    size_t n_consts;
-    in.read((char*)&n_consts, sizeof(size_t));
-    for (size_t i = 0; i < n_consts; ++i) {
+    static constexpr uint8_t FILE_TAG_STRUCT = 0x11;
+
+    auto read_value = [&](auto&& self) -> Value {
         uint8_t tag; in.read((char*)&tag, 1);
         if (tag == TAG_NUM) {
             int64_t q; in.read((char*)&q, sizeof(int64_t));
-            as.add_constant(Value::make_intscaled(q));
-        } else if (tag == TAG_BOOL) {
-            bool val; in.read((char*)&val, sizeof(bool));
-            as.add_constant(Value::make_bool(val));
+            return Value::make_intscaled(q);
         }
-        else if (tag == TAG_NIL) as.add_constant(Value::make_nil());
+        else if (tag == TAG_BOOL) {
+            bool b; in.read((char*)&b, sizeof(bool));
+            return Value::make_bool(b);
+        }
+        else if (tag == TAG_NIL) {
+            return Value::make_nil();
+        }
         else if (tag == TAG_OBJ) {
             size_t len; in.read((char*)&len, sizeof(size_t));
             std::string s(len, '\0');
             in.read(&s[0], len);
-            as.add_constant(Value::make_obj(new ObjString(s)));
-        } else if (tag == FILE_TAG_FUNC) {
+            return Value::make_obj(new ObjString(s));
+        }
+        else if (tag == FILE_TAG_FUNC) {
             int32_t bid; in.read((char*)&bid, sizeof(int32_t));
             uint8_t ret; in.read((char*)&ret, 1);
             uint8_t argc; in.read((char*)&argc, 1);
@@ -115,8 +143,7 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
                 const BuiltinEntry* e = BuiltinRegistry::get_entry(bid);
                 if (e) {
                     ObjFunction* of = new ObjFunction(bid, e->return_type, e->param_types, e->name);
-                    as.add_constant(Value::make_obj(of));
-                    continue;
+                    return Value::make_obj(of);
                 }
             }
             if (!name.empty()) {
@@ -125,13 +152,33 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
                     const BuiltinEntry* e = BuiltinRegistry::get_entry(id);
                     if (e) {
                         ObjFunction* of = new ObjFunction(id, e->return_type, e->param_types, e->name);
-                        as.add_constant(Value::make_obj(of));
-                        continue;
+                        return Value::make_obj(of);
                     }
                 }
             }
-            as.add_constant(Value::make_nil());
-        } else throw std::runtime_error("Unknown constant tag in bytecode");
+            return Value::make_nil();
+        }
+        else if (tag == FILE_TAG_STRUCT) {
+            int32_t itemid; in.read((char*)&itemid, sizeof(int32_t));
+            uint32_t fcount; in.read((char*)&fcount, sizeof(uint32_t));
+            ObjStruct* os = new ObjStruct(itemid);
+            os->fields.resize(fcount);
+            for (uint32_t i = 0; i < fcount; ++i) {
+                Value fv = self(self);
+                os->fields[i] = fv;
+                retain(os->fields[i]);
+            }
+            return Value::make_obj(os);
+        }
+        else
+            throw std::runtime_error("Unknown constant tag in bytecode (load)");
+    };
+
+    size_t n_consts;
+    in.read((char*)&n_consts, sizeof(size_t));
+    for (size_t i = 0; i < n_consts; ++i) {
+        Value v = read_value(read_value);
+        as.add_constant(v);
     }
 
     size_t n_code;

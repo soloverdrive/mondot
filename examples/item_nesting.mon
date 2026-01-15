@@ -1,0 +1,18 @@
+unit item_nesting
+{
+    item obj1 (
+        string val
+    )
+
+    item obj2(
+        obj1 firstobj
+    )
+
+    on void main()
+        obj1 n = create("x")
+        obj2 i = create(n, 1)
+
+        print(n.val)
+        print(i.firstobj.val)
+    end
+}

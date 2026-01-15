@@ -20,6 +20,9 @@ inline const char* opcode_to_string(OpCode op) {
         case OP_TABLE_SET: return "OP_TABLE_SET";
         case OP_TABLE_NEW: return "OP_TABLE_NEW";
         case OP_INDEX:     return "OP_INDEX";
+        case OP_STRUCT_NEW: return "OP_STRUCT_NEW";
+        case OP_STRUCT_SET: return "OP_STRUCT_SET";
+        case OP_STRUCT_GET: return "OP_STRUCT_GET";
         default:           return "OP_UNKNOWN";
     }
 }

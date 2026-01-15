@@ -1,25 +1,28 @@
-unit minimal
+unit itens_and_poo
 {
-    item channel
-        string name
-        number subs
-        list<video> videos
-    end
+    item channel (
+        string name,
+        number subs,
+        list videos
+    )
 
-    item video
-        string title
-        string description
+    item video (
+        string title,
+        string description,
         number likes
-    end
+    )
 
-    on void upload(this: channel, content: video)
-        this.videos.append(content)
+    on void firstvideo(this: channel, media: video)
+        this.videos = [media]
     end
 
     on void main()
-        channel my_channel = create("my channel", 120, create())
+        list videos = []
+        channel my_channel = create("my channel", 120, videos)
 
         video video1 = create("first video", "this is the first video", 1438)
-        upload(my_channel, video1)
+        firstvideo(my_channel, video1)
+
+        print(my_channel.videos[1].title)
     end
 }

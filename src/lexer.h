@@ -4,7 +4,7 @@
 enum class TK {
     TK_BAD, END_FILE, IDENT, NUMBER, STRING, BOOL, NIL, UNIT, ON, IF, ELSE, WHILE,
     KEY_END, VAR, PLUS, MINUS, MUL, DIV, ASSIGN, EQ, LT, GT, LP, RP,
-    LBRACE, RBRACE, COMMA, DOT, COLON, AS, LBRACK, RBRACK, RETURN
+    LBRACE, RBRACE, COMMA, DOT, COLON, AS, LBRACK, RBRACK, RETURN, ITEM
 };
 
 struct Token { TK k; std::string lex; int line; int col; };

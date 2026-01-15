@@ -33,6 +33,7 @@ Token Lexer::next() {
         if (s == "nil") return {TK::NIL, s, start_line, start_col};
         if (s == "as") return {TK::AS, s, start_line, start_col};
         if (s == "return") return {TK::RETURN, s, start_line, start_col};
+        if (s == "item") return {TK::ITEM, s, start_line, start_col};
         return {TK::IDENT, s, start_line, start_col};
     }
     if (std::isdigit((unsigned char)c)) {

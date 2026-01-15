@@ -291,6 +291,70 @@ void VM::run() {
                 break;
             }
 
+            case OP_STRUCT_NEW: {
+                // ins.a = dest_rel, ins.b = item_type_id, ins.c = field_count
+                int dst = base + ins.a;
+                int itemid = ins.b;
+                int field_count = ins.c;
+                if (field_count < 0) field_count = 0;
+                ObjStruct* s = new ObjStruct(itemid);
+                s->fields.resize(field_count);
+                Value v = Value::make_obj(s);
+
+                release(stack[dst]);
+                stack[dst] = v;
+                retain(stack[dst]);
+                break;
+            }
+
+            case OP_STRUCT_SET: {
+                // ins.a = struct_reg (relative), ins.b = field_index, ins.c = value_reg (relative)
+                int struct_reg = base + ins.a;
+                int field_index = ins.b;
+                int val_reg = base + ins.c;
+
+                Value structv = stack[struct_reg];
+                if (!structv.is_obj() || structv.as_obj()->type != OBJ_STRUCT) {
+                    ObjStruct* snew = new ObjStruct(-1);
+                    snew->fields.resize(field_index + 1);
+                    Value newv = Value::make_obj(snew);
+                    release(stack[struct_reg]);
+                    stack[struct_reg] = newv;
+                    retain(stack[struct_reg]);
+                    structv = stack[struct_reg];
+                }
+                ObjStruct* os = (ObjStruct*) structv.as_obj();
+                if (field_index < 0) {
+                    break;
+                }
+                if (field_index >= (int)os->fields.size()) os->fields.resize(field_index + 1);
+
+                release(os->fields[field_index]);
+                os->fields[field_index] = stack[val_reg];
+                retain(os->fields[field_index]);
+                break;
+            }
+
+            case OP_STRUCT_GET: {
+                // ins.a = dest_rel, ins.b = struct_reg (relative), ins.c = field_index
+                int dst = base + ins.a;
+                int struct_reg = base + ins.b;
+                int field_index = ins.c;
+                Value structv = stack[struct_reg];
+                Value result = Value::make_nil();
+                if (structv.is_obj() && structv.as_obj()->type == OBJ_STRUCT) {
+                    ObjStruct* os = (ObjStruct*) structv.as_obj();
+                    if (field_index >= 0 && field_index < (int)os->fields.size()) result = os->fields[field_index];
+                    else result = Value::make_nil();
+                } else
+                    result = Value::make_nil();
+                
+                release(stack[dst]);
+                stack[dst] = result;
+                retain(stack[dst]);
+                break;
+            }
+
             default:
                 break;
         }

@@ -4,6 +4,8 @@ unit list
         list a = [1, 2, 3]
 
         number access = 2
+        a[access] = 4
+        
         print(a[access])
     end
 }

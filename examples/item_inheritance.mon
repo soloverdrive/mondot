@@ -1,0 +1,10 @@
+unit item_inheritance
+{
+    item obj1 (string val)
+    item obj2: obj1 ()
+
+    on void main()
+        obj2 i = create("x")
+        print(i.val)
+    end
+}

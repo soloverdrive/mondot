@@ -3,6 +3,7 @@
 #include "source_manager.h"
 
 #include "builtin_registry.h"
+#include "value.h"
 
 Compiler::Compiler(const std::string& source) : source_text_(source) {
     for (const auto &be : BuiltinRegistry::all_entries()) {
@@ -31,9 +32,9 @@ int Compiler::resolve_local(const std::string& name) {
     for (int i = (int)locals_.size() - 1; i >= 0; --i) if (locals_[i].name == name) return locals_[i].slot;
     return -1;
 }
-int Compiler::define_local(const std::string& name, TypeKind t) {
+int Compiler::define_local(const std::string& name, TypeKind t, int user_type_id) {
     int slot = (int)locals_.size();
-    locals_.push_back({name, scope_depth_, slot, t});
+    locals_.push_back({name, scope_depth_, slot, t, user_type_id});
     return slot;
 }
 
@@ -56,9 +57,70 @@ std::string Compiler::type_kind_to_string(TypeKind t) {
         case TY_STRING: return "string";
         case TY_BOOL:   return "bool";
         case TY_VOID:   return "void";
+        case TY_LIST:   return "list";
+        case TY_ITEM:   return "item";
+        case TY_TABLE:  return "table";
         case TY_UNKNOWN: return "unknown";
         default: return "unknown";
     }
+}
+
+int Compiler::register_item_type(const std::string &name, const std::string &parent_name, const std::vector<std::pair<std::string, TypeKind>>& fields) {
+    static int next_id = 0;
+    auto itdup = item_name_to_id_.find(name);
+    if (itdup != item_name_to_id_.end()) {
+        push_diag(std::string("Duplicate item type: ") + name, {0,0,0}, "");
+        return itdup->second;
+    }
+
+    int parent_id = -1;
+    if (!parent_name.empty()) {
+        auto it = item_name_to_id_.find(parent_name);
+        if (it != item_name_to_id_.end()) parent_id = it->second;
+        else {
+            push_diag(std::string("Unknown parent item type: ") + parent_name, {0,0,0}, "");
+            parent_id = -1;
+        }
+    }
+
+    int id = next_id++;
+    ItemType itp;
+    itp.id = id;
+    itp.name = name;
+    itp.parent_id = parent_id;
+
+    if (parent_id >= 0 && parent_id < (int)item_types_.size()) {
+        const auto &parent_fields = item_types_[parent_id].fields;
+        itp.fields.insert(itp.fields.end(), parent_fields.begin(), parent_fields.end());
+    }
+
+    itp.fields.insert(itp.fields.end(), fields.begin(), fields.end());
+
+    item_types_.push_back(itp);
+    item_name_to_id_[name] = id;
+
+    FunctionSig fs;
+    fs.name = "create";
+    fs.return_type = TY_ITEM;
+    fs.user_return_type_id = id;
+    fs.label_id = -1;
+    fs.is_builtin = false;
+    for (auto &f : itp.fields) fs.param_types.push_back(f.second);
+    function_table_[fs.name].push_back(fs);
+
+    return id;
+}
+
+int Compiler::find_item_id_by_name(const std::string &name) const {
+    auto it = item_name_to_id_.find(name);
+    if (it == item_name_to_id_.end()) return -1;
+    return it->second;
+}
+
+const std::vector<std::pair<std::string, TypeKind>>& Compiler::get_item_fields(int id) const {
+    static std::vector<std::pair<std::string, TypeKind>> empty;
+    if (id < 0 || id >= (int)item_types_.size()) return empty;
+    return item_types_[id].fields;
 }
 
 FunctionSig* Compiler::resolve_function(const std::string &name, const std::vector<TypeKind> &arg_types) {

@@ -15,8 +15,9 @@ struct ObjString;
 struct ObjList;
 struct ObjTable;
 struct ObjFunction;
+struct ObjStruct;
 
-enum TypeKind { TY_UNKNOWN=0, TY_VOID=1, TY_NUMBER=2, TY_STRING=3, TY_BOOL=4, TY_LIST=5, TY_TABLE=6 };
+enum TypeKind { TY_UNKNOWN=0, TY_VOID=1, TY_NUMBER=2, TY_STRING=3, TY_BOOL=4, TY_LIST=5, TY_TABLE=6, TY_ITEM=7 };
 
 inline TypeKind parse_type_name(const std::string& s) {
     if (s == "void") return TY_VOID;
@@ -57,7 +58,7 @@ struct Value {
     Obj* as_obj() const { return reinterpret_cast<Obj*>(raw & ~7ULL); }
 };
 
-enum ObjType { OBJ_STRING=1, OBJ_LIST=2, OBJ_TABLE=3, OBJ_FUNCTION=4 };
+enum ObjType { OBJ_STRING=1, OBJ_LIST=2, OBJ_TABLE=3, OBJ_FUNCTION=4, OBJ_STRUCT=5 };
 
 struct Obj {
     int type;
@@ -76,6 +77,12 @@ struct ObjList : Obj {
 struct ObjTable : Obj {
     std::vector<std::pair<Value, Value>> entries;
     ObjTable(): Obj(OBJ_TABLE) {}
+};
+
+struct ObjStruct : Obj {
+    int item_type_id;
+    std::vector<Value> fields;
+    ObjStruct(int item_id = -1) : Obj(OBJ_STRUCT), item_type_id(item_id) {}
 };
 
 struct ObjFunction : Obj {
@@ -109,6 +116,7 @@ inline TypeKind type_of_value(const Value& v) {
         if (o->type == OBJ_STRING) return TY_STRING;
         if (o->type == OBJ_LIST) return TY_LIST;
         if (o->type == OBJ_TABLE) return TY_TABLE;
+        if (o->type == OBJ_STRUCT) return TY_ITEM;
     }
     return TY_UNKNOWN;
 }
