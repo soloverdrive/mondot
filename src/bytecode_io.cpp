@@ -247,26 +247,26 @@ void BytecodeIO::save_text(const std::string& filename_txt, Assembler& as) {
         const Value& v = as.constants[i];
         out << i << " -> ";
         if (v.is_num()) {
-            out << "NUM " << v.as_intscaled();
+            out << "number " << v.as_intscaled();
         } else if (v.is_bool()) {
-            out << "BOOL " << (v.as_bool() ? "true" : "false");
+            out << "bool " << (v.as_bool() ? "true" : "false");
         } else if (v.is_nil()) {
-            out << "NIL";
+            out << "nil";
         } else if (v.is_obj()) {
             Obj* o = v.as_obj();
             if (o->type == OBJ_STRING)
-                out << "STRING \"" << escape_string(((ObjString*)o)->str) << "\"";
+                out << "string \"" << escape_string(((ObjString*)o)->str) << "\"";
             else if (o->type == OBJ_FUNCTION) {
                 ObjFunction* of = (ObjFunction*)o;
-                out << "FUNC ";
+                out << "function ";
                 if (of->builtin_id >= 0) out << "[builtin#" << of->builtin_id << "]";
-                out << of->name << " -> ret=" << (int)of->return_type << " params=";
+                out << of->name << " -> ret=" << typekind_to_string(of->return_type) << " params=";
                 for (size_t k = 0; k < of->param_types.size(); ++k) {
                     if (k) out << ",";
-                    out << (int)of->param_types[k];
+                    out << typekind_to_string(of->param_types[k]);
                 }
             } else
-                out << "OBJ(type=" << (int)o->type << ")";
+                out << "object(type=" << (int)o->type << ")";
         } else
             out << "UNKNOWN_CONST";
         
