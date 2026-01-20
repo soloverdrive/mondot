@@ -167,18 +167,16 @@ std::pair<int, TypeKind> Parser::compile_atom() {
         return {r, TY_UNKNOWN};
     }
 
-    // array literal: [ expr, expr, ... ]  -> runtime construction via OP_TABLE_NEW/SET
+    // array literal -> runtime construction via OP_LIST_NEW / OP_LIST_PUSH
     if (curr_.k == TK::LBRACK) {
         advance();
         int dest = owner_->define_local("", TY_LIST);
-        owner_->asm_.emit(OP_TABLE_NEW, line, dest);
-        int elem_index = 0;
+        owner_->asm_.emit(OP_LIST_NEW, line, dest); // novo opcode
         if (curr_.k != TK::RBRACK) {
             while (true) {
-                auto p = compile_expr();
-                int keyreg = owner_->load_const(Value::make_int(elem_index), line);
-                owner_->asm_.emit(OP_TABLE_SET, line, dest, keyreg, p.first);
-                elem_index++;
+                auto p = compile_expr(); // p.first = reg with element
+                // emite push: a = list_reg, b = value_reg
+                owner_->asm_.emit(OP_LIST_PUSH, line, dest, p.first);
                 if (curr_.k == TK::COMMA) { advance(); continue; }
                 break;
             }
@@ -186,35 +184,6 @@ std::pair<int, TypeKind> Parser::compile_atom() {
         if (curr_.k == TK::RBRACK) advance();
         else consume(TK::RBRACK, "Expected ']'");
         return {dest, TY_LIST};
-    }
-
-    // Table literal: { val, key: val, ... } -> runtime construction
-    if (curr_.k == TK::LBRACE) {
-        advance();
-        int dest = owner_->define_local("", TY_TABLE);
-        owner_->asm_.emit(OP_TABLE_NEW, line, dest);
-        int next_index = 0;
-        while (curr_.k != TK::RBRACE && curr_.k != TK::END_FILE) {
-            if (curr_.k == TK::IDENT && peek_token(1).k == TK::COLON) {
-                std::string key = curr_.lex;
-                advance();
-                advance();
-                auto val = compile_expr();
-                ObjString* s = new ObjString(key);
-                int keyreg = owner_->load_const(Value::make_obj(s), line);
-                owner_->asm_.emit(OP_TABLE_SET, line, dest, keyreg, val.first);
-            } else {
-                auto val = compile_expr();
-                int keyreg = owner_->load_const(Value::make_int(next_index), line);
-                owner_->asm_.emit(OP_TABLE_SET, line, dest, keyreg, val.first);
-                next_index++;
-            }
-            if (curr_.k == TK::COMMA) { advance(); continue; }
-            else break;
-        }
-        if (curr_.k == TK::RBRACE) advance();
-        else consume(TK::RBRACE, "Expected '}' for table literal");
-        return {dest, TY_TABLE};
     }
 
     if (curr_.k == TK::IDENT) {
@@ -367,7 +336,12 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     ObjString* s = new ObjString(member);
                     int keyreg = owner_->load_const(Value::make_obj(s), line);
                     int dest = owner_->define_local("", TY_UNKNOWN);
-                    owner_->asm_.emit(OP_INDEX, line, dest, tmp, keyreg);
+                    // if base is known to be a list, use OP_LIST_GET, otherwise OP_INDEX (table)
+                    if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
+                        owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, keyreg);
+                    else 
+                        owner_->asm_.emit(OP_INDEX, line, dest, tmp, keyreg);
+                    
                     tmp = dest;
                     continue;
                 } else if (curr_.k == TK::NUMBER) {
@@ -376,7 +350,13 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     advance();
                     int idxreg = owner_->load_const(Value::make_int(idxval - 1), line);
                     int dest = owner_->define_local("", TY_UNKNOWN);
-                    owner_->asm_.emit(OP_INDEX, line, dest, tmp, idxreg);
+                    
+                    // if base is list, emit OP_LIST_GET; otherwise OP_INDEX
+                    if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
+                        owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, idxreg);
+                    else 
+                        owner_->asm_.emit(OP_INDEX, line, dest, tmp, idxreg);
+                    
                     tmp = dest;
                     continue;
                 } else {
@@ -390,7 +370,13 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                 int negone = owner_->load_const(Value::make_int(-1), line);
                 owner_->asm_.emit(OP_ADD, line, p.first, p.first, negone);
                 int dest = owner_->define_local("", TY_UNKNOWN);
-                owner_->asm_.emit(OP_INDEX, line, dest, tmp, p.first);
+
+                // if base is list, emit OP_LIST_GET; otherwise OP_INDEX
+                if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST) 
+                    owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, p.first);
+                else 
+                    owner_->asm_.emit(OP_INDEX, line, dest, tmp, p.first);
+                
                 tmp = dest;
                 continue;
             } else break;
@@ -690,12 +676,22 @@ void Parser::compile_stmt() {
                             ObjString* s = new ObjString(op.member);
                             int keyreg = owner_->load_const(Value::make_obj(s), line);
                             int newtmp = owner_->define_local("", TY_UNKNOWN);
-                            owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, keyreg);
+                            // choose OP_LIST_GET when base is known list, else OP_INDEX
+                            if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
+                                owner_->asm_.emit(OP_LIST_GET, line, newtmp, tmp, keyreg);
+                            else
+                                owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, keyreg);
+                            
                             tmp = newtmp;
                             continue;
                         } else {
                             int newtmp = owner_->define_local("", TY_UNKNOWN);
-                            owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, op.key_reg);
+                            // choose OP_LIST_GET when base is known list, else OP_INDEX
+                            if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
+                                owner_->asm_.emit(OP_LIST_GET, line, newtmp, tmp, op.key_reg);
+                            else
+                                owner_->asm_.emit(OP_INDEX, line, newtmp, tmp, op.key_reg);
+                            
                             tmp = newtmp;
                             continue;
                         }
@@ -719,10 +715,20 @@ void Parser::compile_stmt() {
                         }
                         ObjString* s = new ObjString(last.member);
                         int keyreg = owner_->load_const(Value::make_obj(s), line);
-                        owner_->asm_.emit(OP_TABLE_SET, line, tmp, keyreg, rreg);
+                        // final assignment: if base is list -> OP_LIST_SET, else -> OP_TABLE_SET
+                        if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST) {
+                            owner_->asm_.emit(OP_LIST_SET, line, tmp, keyreg, rreg);
+                        } else {
+                            owner_->asm_.emit(OP_TABLE_SET, line, tmp, keyreg, rreg);
+                        }
                         return;
                     } else {
-                        owner_->asm_.emit(OP_TABLE_SET, line, tmp, last.key_reg, rreg);
+                        // final assignment with index
+                        if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
+                            owner_->asm_.emit(OP_LIST_SET, line, tmp, last.key_reg, rreg);
+                        else
+                            owner_->asm_.emit(OP_TABLE_SET, line, tmp, last.key_reg, rreg);
+                        
                         return;
                     }
                 }

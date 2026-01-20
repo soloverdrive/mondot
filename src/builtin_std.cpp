@@ -59,15 +59,6 @@ namespace {
         return Value::make_nil();
     }
 
-    Value builtin_len_string(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
-        if (argc < 1) return Value::make_nil();
-        const Value& v = argv[0];
-        if (!(v.is_obj() && v.as_obj()->type == OBJ_STRING)) return Value::make_nil();
-        ObjString* s = (ObjString*)v.as_obj();
-        int64_t len = (int64_t)s->str.size();
-        return Value::make_int(len);
-    }
-
     Value builtin_print_array(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
         if (argc < 1) { std::cout << "[]\n"; return Value::make_nil(); }
         const Value& v = argv[0];
@@ -80,6 +71,15 @@ namespace {
         }
         std::cout << "]\n";
         return Value::make_nil();
+    }
+
+    Value builtin_len_string(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
+        if (argc < 1) return Value::make_nil();
+        const Value& v = argv[0];
+        if (!(v.is_obj() && v.as_obj()->type == OBJ_STRING)) return Value::make_nil();
+        ObjString* s = (ObjString*)v.as_obj();
+        int64_t len = (int64_t)s->str.size();
+        return Value::make_int(len);
     }
 
     Value builtin_sin_1(int argc, const Value* argv, [[maybe_unused]] void* ctx) {

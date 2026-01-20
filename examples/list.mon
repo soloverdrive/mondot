@@ -6,6 +6,7 @@ unit list
         number access = 2
         a[access] = 4
         
+        print(a)
         print(a[access])
     end
 }

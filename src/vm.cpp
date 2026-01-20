@@ -291,6 +291,110 @@ void VM::run() {
                 break;
             }
 
+            case OP_LIST_NEW: {
+                // ins.a = dest_rel
+                int dst = base + ins.a;
+                ObjList* l = new ObjList();
+                Value v = Value::make_obj(l);
+                release(stack[dst]);
+                stack[dst] = v;
+                retain(stack[dst]);
+                break;
+            }
+
+            case OP_LIST_PUSH: {
+                // ins.a = list_reg, ins.b = value_reg
+                int list_reg = base + ins.a;
+                int val_reg = base + ins.b;
+                Value listv = stack[list_reg];
+                if (!listv.is_obj() || listv.as_obj()->type != OBJ_LIST) {
+                    ObjList* lnew = new ObjList();
+                    Value newv = Value::make_obj(lnew);
+                    release(stack[list_reg]);
+                    stack[list_reg] = newv;
+                    retain(stack[list_reg]);
+                    listv = stack[list_reg];
+                }
+                ObjList* L = (ObjList*) listv.as_obj();
+                // push a copy of the value (Value is small) and retain it
+                L->elements.push_back(stack[val_reg]);
+                retain(L->elements.back());
+                break;
+            }
+
+            case OP_LIST_GET: {
+                // ins.a = dest_rel, ins.b = list_reg, ins.c = index_reg
+                int dst = base + ins.a;
+                int list_reg = base + ins.b;
+                int idx_reg = base + ins.c;
+                Value listv = stack[list_reg];
+                Value result = Value::make_nil();
+                if (listv.is_obj() && listv.as_obj()->type == OBJ_LIST) {
+                    ObjList* L = (ObjList*) listv.as_obj();
+                    if (stack[idx_reg].is_num()) {
+                        int64_t idx = stack[idx_reg].as_intscaled() >> INTSCALED_SHIFT;
+                        if (idx >= 0 && (size_t)idx < L->elements.size()) result = L->elements[(size_t)idx];
+                        else result = Value::make_nil();
+                    } else {
+                        result = Value::make_nil();
+                    }
+                } else result = Value::make_nil();
+
+                release(stack[dst]);
+                stack[dst] = result;
+                retain(stack[dst]);
+                break;
+            }
+
+            case OP_LIST_SET: {
+                // ins.a = list_reg, ins.b = index_reg, ins.c = value_reg
+                int list_reg = base + ins.a;
+                int idx_reg = base + ins.b;
+                int val_reg = base + ins.c;
+                Value listv = stack[list_reg];
+                if (!listv.is_obj() || listv.as_obj()->type != OBJ_LIST) {
+                    ObjList* lnew = new ObjList();
+                    Value newv = Value::make_obj(lnew);
+                    release(stack[list_reg]);
+                    stack[list_reg] = newv;
+                    retain(stack[list_reg]);
+                    listv = stack[list_reg];
+                }
+                ObjList* L = (ObjList*) listv.as_obj();
+                if (!stack[idx_reg].is_num()) break;
+                int64_t idx = stack[idx_reg].as_intscaled() >> INTSCALED_SHIFT;
+                if (idx < 0) break;
+                if ((size_t)idx >= L->elements.size()) {
+                    // resize with nils
+                    size_t newsize = (size_t)idx + 1;
+                    L->elements.resize(newsize, Value::make_nil());
+                    // NOTE: newly inserted nils don't need retain (make_nil returns tagged immediate)
+                }
+                // replace existing element
+                release(L->elements[(size_t)idx]);
+                L->elements[(size_t)idx] = stack[val_reg];
+                retain(L->elements[(size_t)idx]);
+                break;
+            }
+
+            case OP_LIST_LEN: {
+                // ins.a = dest_rel, ins.b = list_reg
+                int dst = base + ins.a;
+                int list_reg = base + ins.b;
+                Value result = Value::make_nil();
+                Value lv = stack[list_reg];
+                if (lv.is_obj() && lv.as_obj()->type == OBJ_LIST) {
+                    ObjList* L = (ObjList*) lv.as_obj();
+                    result = Value::make_int((int64_t)L->elements.size());
+                } else {
+                    result = Value::make_nil();
+                }
+                release(stack[dst]);
+                stack[dst] = result;
+                retain(stack[dst]);
+                break;
+            }
+
             case OP_STRUCT_NEW: {
                 // ins.a = dest_rel, ins.b = item_type_id, ins.c = field_count
                 int dst = base + ins.a;

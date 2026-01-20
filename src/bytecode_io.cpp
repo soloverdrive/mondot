@@ -7,6 +7,8 @@
 #include "facts.h"
 
 static constexpr uint8_t FILE_TAG_FUNC = 0x10;
+static constexpr uint8_t FILE_TAG_LIST = 0x12;
+static constexpr uint8_t FILE_TAG_STRUCT = 0x11;
 
 void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisual) {
     std::ofstream out(filename, std::ios::binary);
@@ -14,7 +16,6 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
     const char magic[] = "MDOT";
     out.write(magic, 4);
 
-    static constexpr uint8_t FILE_TAG_STRUCT = 0x11;
     std::function<void(const Value&)> write_value = [&](const Value& v) {
         if (v.is_num()) {
             uint8_t tag = TAG_NUM;
@@ -69,6 +70,16 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
                 out.write((char*)&fcount, sizeof(uint32_t));
                 for (uint32_t i = 0; i < fcount; ++i) {
                     write_value(os->fields[i]);
+                }
+            }
+            else if (o->type == OBJ_LIST) {
+                uint8_t tag = FILE_TAG_LIST;
+                out.write((char*)&tag, 1);
+                ObjList* ol = (ObjList*)o;
+                size_t cnt = ol->elements.size();
+                out.write((char*)&cnt, sizeof(size_t));
+                for (size_t i = 0; i < cnt; ++i) {
+                    write_value(ol->elements[i]);
                 }
             }
             else {
@@ -169,6 +180,17 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
                 retain(os->fields[i]);
             }
             return Value::make_obj(os);
+        }
+        else if (tag == FILE_TAG_LIST) {
+            size_t cnt; in.read((char*)&cnt, sizeof(size_t));
+            ObjList* ol = new ObjList();
+            ol->elements.resize(cnt);
+            for (size_t i = 0; i < cnt; ++i) {
+                Value ev = self(self);
+                ol->elements[i] = ev;
+                retain(ol->elements[i]);
+            }
+            return Value::make_obj(ol);
         }
         else
             throw std::runtime_error("Unknown constant tag in bytecode (load)");

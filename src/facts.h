@@ -23,6 +23,11 @@ inline const char* opcode_to_string(OpCode op) {
         case OP_STRUCT_NEW: return "OP_STRUCT_NEW";
         case OP_STRUCT_SET: return "OP_STRUCT_SET";
         case OP_STRUCT_GET: return "OP_STRUCT_GET";
+        case OP_LIST_NEW:   return "OP_LIST_NEW";
+        case OP_LIST_PUSH:  return "OP_LIST_PUSH";
+        case OP_LIST_GET:   return "OP_LIST_GET";
+        case OP_LIST_SET:   return "OP_LIST_SET";
+        case OP_LIST_LEN:   return "OP_LIST_LEN";
         default:           return "OP_UNKNOWN";
     }
 }
