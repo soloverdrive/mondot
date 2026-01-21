@@ -34,6 +34,11 @@ static int64_t parse_number_intscaled_from_lex(const std::string &lex) {
     return int64_t(intpart) << INTSCALED_SHIFT;
 }
 
+static long long safe_as_intscaled(const Value &v) {
+    if (!v.is_num()) return 0;
+    return (long long) v.as_intscaled();
+}
+
 void Parser::tokenize_all(const std::string& src) {
     tokens_.clear();
     Lexer lx(src);
@@ -86,13 +91,18 @@ void Parser::prescan_functions() {
         if (tokens_[i].k == TK::ON) {
             Token rett = tokens_[i+1];
             Token name = tokens_[i+2];
-            if (rett.k == TK::IDENT && name.k == TK::IDENT) {
-                FunctionSig fs;
-                fs.name = name.lex;
-                fs.return_type = parse_type_name(rett.lex);
-                fs.declared_line = name.line;
-                fs.label_id = owner_->asm_.make_label();
-                owner_->function_table_[fs.name].push_back(fs);
+            if (name.k == TK::IDENT) {
+                TypeKind maybe = parse_type_name(rett.lex);
+                int uid = -1;
+                if (maybe == TY_UNKNOWN) uid = owner_->find_item_id_by_name(rett.lex);
+                if (maybe != TY_UNKNOWN || uid >= 0) {
+                    FunctionSig fs;
+                    fs.name = name.lex;
+                    fs.return_type = maybe;
+                    fs.declared_line = name.line;
+                    fs.label_id = owner_->asm_.make_label();
+                    owner_->function_table_[fs.name].push_back(fs);
+                }
             }
         }
     }
@@ -106,9 +116,27 @@ std::pair<TypeKind,int> Parser::resolve_type_name(const std::string &s) {
     return {TY_UNKNOWN, -1};
 }
 
-std::pair<int, TypeKind> Parser::compile_expr(int min_prec) {
-    auto left_pair = compile_atom();
-    int left = left_pair.first; TypeKind left_t = left_pair.second;
+int Parser::ensure_reg(ExprResult &er, int line) {
+    if (er.is_const) {
+        int r = owner_->emit_const(er.const_value, line);
+        er.reg = r;
+        er.is_const = false;
+        return r;
+    }
+    if (er.reg != -1) return er.reg;
+    // fallback: emit nil
+    int nr = owner_->emit_const(Value::make_nil(), line);
+    er.reg = nr;
+    er.is_const = false;
+    return nr;
+}
+
+ExprResult Parser::compile_expr(int min_prec) {
+    return compile_expr_internal(min_prec);
+}
+
+ExprResult Parser::compile_expr_internal(int min_prec) {
+    ExprResult left = compile_atom_internal();
     while (true) {
         TK op = curr_.k;
         int prec = 0; OpCode opcode = OP_ADD;
@@ -118,21 +146,79 @@ std::pair<int, TypeKind> Parser::compile_expr(int min_prec) {
         else break;
         if (prec < min_prec) break;
         advance();
-        auto right_pair = compile_expr(prec + 1);
-        int right = right_pair.first; TypeKind right_t = right_pair.second;
+        ExprResult right = compile_expr_internal(prec + 1);
+
+        if (left.is_const && right.is_const) {
+            if ((opcode==OP_ADD||opcode==OP_SUB||opcode==OP_MUL||opcode==OP_DIV) &&
+                left.const_value.is_num() && right.const_value.is_num()) {
+                long long n1 = safe_as_intscaled(left.const_value);
+                long long n2 = safe_as_intscaled(right.const_value);
+                bool ok = true;
+                long long resq = 0;
+                switch (opcode) {
+                    case OP_ADD: resq = n1 + n2; break;
+                    case OP_SUB: resq = n1 - n2; break;
+                    case OP_MUL: resq = n1 * n2; break;
+                    case OP_DIV:
+                        if (n2 == 0) ok = false;
+                        else resq = n1 / n2;
+                        break;
+                    default: ok = false; break;
+                }
+                if (ok) {
+                    Value nv = Value::make_intscaled(resq);
+                    left = ExprResult::make_const(nv, TY_NUMBER);
+                    continue;
+                }
+            }
+            if (opcode==OP_LT || opcode==OP_GT || opcode==OP_EQ) {
+                if (left.const_value.is_num() && right.const_value.is_num()) {
+                    long long n1 = safe_as_intscaled(left.const_value);
+                    long long n2 = safe_as_intscaled(right.const_value);
+                    bool rv = false;
+                    if (opcode==OP_LT) rv = (n1 < n2);
+                    else if (opcode==OP_GT) rv = (n1 > n2);
+                    else rv = (n1 == n2);
+                    left = ExprResult::make_const(Value::make_bool(rv), TY_BOOL);
+                    continue;
+                }
+                if (left.const_value.is_bool() && right.const_value.is_bool()) {
+                    bool b1 = left.const_value.as_bool();
+                    bool b2 = right.const_value.as_bool();
+                    bool rv = false;
+                    if (opcode==OP_EQ) rv = (b1 == b2);
+                    if (opcode==OP_EQ) { left = ExprResult::make_const(Value::make_bool(rv), TY_BOOL); continue; }
+                }
+                if (opcode==OP_EQ && left.const_value.is_obj() && right.const_value.is_obj()) {
+                    Obj* o1 = left.const_value.as_obj();
+                    Obj* o2 = right.const_value.as_obj();
+                    if (o1->type == OBJ_STRING && o2->type == OBJ_STRING) {
+                        std::string s1 = ((ObjString*)o1)->str;
+                        std::string s2 = ((ObjString*)o2)->str;
+                        left = ExprResult::make_const(Value::make_bool(s1 == s2), TY_BOOL);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        int left_reg = ensure_reg(left, curr_.line);
+        int right_reg = ensure_reg(right, curr_.line);
+
         TypeKind result_t = TY_UNKNOWN;
-        if (opcode==OP_ADD || opcode==OP_SUB || opcode==OP_MUL || opcode==OP_DIV) {
-            if (left_t != TY_NUMBER || right_t != TY_NUMBER)
-                owner_->push_diag("Arithmetic operation applied to non-number types", {curr_.line, curr_.col, 1}, owner_->current_function_);
-            result_t = TY_NUMBER;
-        } else if (opcode==OP_LT || opcode==OP_GT || opcode==OP_EQ) result_t = TY_BOOL;
-        owner_->asm_.emit(opcode, curr_.line, left, left, right);
-        left_t = result_t;
+        if (opcode==OP_ADD || opcode==OP_SUB || opcode==OP_MUL || opcode==OP_DIV) result_t = TY_NUMBER;
+        else if (opcode==OP_LT || opcode==OP_GT || opcode==OP_EQ) result_t = TY_BOOL;
+
+        int dest = owner_->define_local("", result_t);
+        owner_->asm_.emit(opcode, curr_.line, dest, left_reg, right_reg);
+
+        left = ExprResult::make_reg(dest, result_t);
     }
-    return {left, left_t};
+
+    return left;
 }
 
-std::pair<int, TypeKind> Parser::compile_atom() {
+ExprResult Parser::compile_atom_internal() {
     int line = curr_.line;
 
     if (curr_.k == TK::TK_BAD) {
@@ -140,50 +226,46 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                           {curr_.line, curr_.col, (int)curr_.lex.size()}, owner_->current_function_);
         advance();
         int r = owner_->define_local("", TY_UNKNOWN);
-        owner_->asm_.emit(OP_CONST, line, r, owner_->asm_.add_constant(Value::make_nil()));
-        return {r, TY_UNKNOWN};
+        int idx = owner_->asm_.add_constant(Value::make_nil());
+        owner_->asm_.emit(OP_CONST, line, r, idx);
+        return ExprResult::make_reg(r, TY_UNKNOWN);
     }
 
     if (curr_.k == TK::NUMBER) {
         int64_t q = parse_number_intscaled_from_lex(curr_.lex);
         advance();
-        int r = owner_->load_const(Value::make_intscaled(q), line);
-        return {r, TY_NUMBER};
+        return ExprResult::make_const(Value::make_intscaled(q), TY_NUMBER);
     }
 
     if (curr_.k == TK::STRING) {
         ObjString* s = new ObjString(curr_.lex); advance();
-        int r = owner_->load_const(Value::make_obj(s), line);
-        return {r, TY_STRING};
+        return ExprResult::make_const(Value::make_obj(s), TY_STRING);
     }
     if (curr_.k == TK::BOOL) {
         bool b = (curr_.lex == "true"); advance();
-        int r = owner_->load_const(Value::make_bool(b), line);
-        return {r, TY_BOOL};
+        return ExprResult::make_const(Value::make_bool(b), TY_BOOL);
     }
     if (curr_.k == TK::NIL) {
         advance();
-        int r = owner_->load_const(Value::make_nil(), line);
-        return {r, TY_UNKNOWN};
+        return ExprResult::make_const(Value::make_nil(), TY_UNKNOWN);
     }
 
-    // array literal -> runtime construction via OP_LIST_NEW / OP_LIST_PUSH
     if (curr_.k == TK::LBRACK) {
         advance();
         int dest = owner_->define_local("", TY_LIST);
-        owner_->asm_.emit(OP_LIST_NEW, line, dest); // novo opcode
+        owner_->asm_.emit(OP_LIST_NEW, line, dest);
         if (curr_.k != TK::RBRACK) {
             while (true) {
-                auto p = compile_expr(); // p.first = reg with element
-                // emite push: a = list_reg, b = value_reg
-                owner_->asm_.emit(OP_LIST_PUSH, line, dest, p.first);
+                ExprResult p = compile_expr_internal();
+                int preg = ensure_reg(p, line);
+                owner_->asm_.emit(OP_LIST_PUSH, line, dest, preg);
                 if (curr_.k == TK::COMMA) { advance(); continue; }
                 break;
             }
         }
         if (curr_.k == TK::RBRACK) advance();
         else consume(TK::RBRACK, "Expected ']'");
-        return {dest, TY_LIST};
+        return ExprResult::make_reg(dest, TY_LIST);
     }
 
     if (curr_.k == TK::IDENT) {
@@ -194,16 +276,22 @@ std::pair<int, TypeKind> Parser::compile_atom() {
             advance();
             std::vector<int> arg_regs;
             std::vector<TypeKind> arg_types;
+            std::vector<ExprResult> arg_exprs;
             if (curr_.k != TK::RP) {
                 while (true) {
-                    auto p = compile_expr();
-                    arg_regs.push_back(p.first);
-                    arg_types.push_back(p.second);
+                    ExprResult p = compile_expr_internal();
+                    arg_exprs.push_back(p);
                     if (curr_.k == TK::COMMA) { advance(); continue; }
                     break;
                 }
             }
             consume(TK::RP, "Expected ')'");
+            for (auto &er : arg_exprs) {
+                int r = ensure_reg(er, line);
+                arg_regs.push_back(r);
+                arg_types.push_back(er.type);
+            }
+
             FunctionSig* fs = owner_->resolve_function(name, arg_types);
             if (!fs) {
                 std::string hint = "Unknown function or invalid overload: " + name;
@@ -223,8 +311,8 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     }
                 }
                 owner_->push_diag(hint, {line, 1, (int)name.size()}, owner_->current_function_);
-                int r = owner_->load_const(Value::make_nil(), line);
-                return {r, TY_UNKNOWN};
+                int r = owner_->emit_const(Value::make_nil(), line);
+                return ExprResult::make_reg(r, TY_UNKNOWN);
             }
             if (fs->user_return_type_id >= 0) {
                 int itemid = fs->user_return_type_id;
@@ -234,16 +322,15 @@ std::pair<int, TypeKind> Parser::compile_atom() {
 
                 const auto &fields = owner_->get_item_fields(itemid);
                 for (size_t i = 0; i < arg_regs.size() && i < fields.size(); ++i) {
-                    // a = struct_reg, b = field_index, c = value_reg
                     owner_->asm_.emit(OP_STRUCT_SET, line, dest, (int)i, arg_regs[i]);
                 }
 
-                return {dest, TY_ITEM};
+                return ExprResult::make_reg(dest, TY_ITEM);
             }
             if (fs->is_builtin) {
                 int bid = BuiltinRegistry::lookup_name(fs->name);
                 ObjFunction* of = new ObjFunction(bid, fs->return_type, fs->param_types, fs->name);
-                int func_reg = owner_->load_const(Value::make_obj(of), line);
+                int func_reg = owner_->emit_const(Value::make_obj(of), line);
 
                 int dest = owner_->define_local("", fs->return_type);
                 std::vector<int> call_arg_slots;
@@ -258,11 +345,11 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     owner_->asm_.emit(OP_MOVE, line, call_arg_slots[i], arg_regs[i]);
 
                 owner_->asm_.emit(OP_CALL_OBJ, line, dest, func_reg, (int)arg_regs.size());
-                return {dest, fs->return_type};
+                return ExprResult::make_reg(dest, fs->return_type);
             }
 
             int dest = emit_call_helper(line, fs, arg_regs);
-            return {dest, fs->return_type};
+            return ExprResult::make_reg(dest, fs->return_type);
         }
 
         int loc = owner_->resolve_local(name);
@@ -280,7 +367,8 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                             advance();
                             int safety = 0;
                             while (curr_.k != TK::RP && curr_.k != TK::END_FILE && safety++ < 2000) {
-                                compile_expr();
+                                ExprResult ignored = compile_expr();
+                                ensure_reg(ignored, line);
                                 if (curr_.k == TK::COMMA) { advance(); continue; }
                                 else break;
                             }
@@ -294,7 +382,8 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     advance();
                     int safety = 0;
                     while (curr_.k != TK::RBRACK && curr_.k != TK::END_FILE && safety++ < 2000) {
-                        compile_expr();
+                        ExprResult ignored = compile_expr();
+                        ensure_reg(ignored, line);
                         if (curr_.k == TK::COMMA) { advance(); continue; }
                         else break;
                     }
@@ -302,7 +391,7 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                 }
             }
 
-            return {r, TY_UNKNOWN};
+            return ExprResult::make_reg(r, TY_UNKNOWN);
         }
 
         int tmp = owner_->define_local("", owner_->locals_[loc].type, owner_->locals_[loc].user_type_id);
@@ -334,9 +423,8 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     }
 
                     ObjString* s = new ObjString(member);
-                    int keyreg = owner_->load_const(Value::make_obj(s), line);
+                    int keyreg = owner_->emit_const(Value::make_obj(s), line);
                     int dest = owner_->define_local("", TY_UNKNOWN);
-                    // if base is known to be a list, use OP_LIST_GET, otherwise OP_INDEX (table)
                     if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
                         owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, keyreg);
                     else 
@@ -348,10 +436,9 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                     long long idxval = 0;
                     try { idxval = stoll(curr_.lex); } catch(...) { idxval = 0; }
                     advance();
-                    int idxreg = owner_->load_const(Value::make_int(idxval - 1), line);
+                    int idxreg = owner_->emit_const(Value::make_int(idxval - 1), line);
                     int dest = owner_->define_local("", TY_UNKNOWN);
                     
-                    // if base is list, emit OP_LIST_GET; otherwise OP_INDEX
                     if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
                         owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, idxreg);
                     else 
@@ -365,29 +452,29 @@ std::pair<int, TypeKind> Parser::compile_atom() {
                 }
             } else if (curr_.k == TK::LBRACK) {
                 advance();
-                auto p = compile_expr();
-                consume(TK::RBRACK, "Expected ']'");
-                int negone = owner_->load_const(Value::make_int(-1), line);
-                owner_->asm_.emit(OP_ADD, line, p.first, p.first, negone);
+                ExprResult p = compile_expr_internal();
+                int preg = ensure_reg(p, line);
+                consume(TK::RBRACK, "Expected ')'");
+                int negone = owner_->emit_const(Value::make_int(-1), line);
+                owner_->asm_.emit(OP_ADD, line, preg, preg, negone);
                 int dest = owner_->define_local("", TY_UNKNOWN);
 
-                // if base is list, emit OP_LIST_GET; otherwise OP_INDEX
                 if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST) 
-                    owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, p.first);
+                    owner_->asm_.emit(OP_LIST_GET, line, dest, tmp, preg);
                 else 
-                    owner_->asm_.emit(OP_INDEX, line, dest, tmp, p.first);
+                    owner_->asm_.emit(OP_INDEX, line, dest, tmp, preg);
                 
                 tmp = dest;
                 continue;
             } else break;
         }
 
-        return {tmp, owner_->locals_[tmp].type};
+        return ExprResult::make_reg(tmp, owner_->locals_[tmp].type);
     }
 
     if (curr_.k == TK::LP) {
         advance();
-        auto p = compile_expr();
+        ExprResult p = compile_expr_internal();
         consume(TK::RP, "Expected ')'");
         return p;
     }
@@ -396,7 +483,7 @@ std::pair<int, TypeKind> Parser::compile_atom() {
     int r = owner_->define_local("", TY_UNKNOWN);
     owner_->asm_.emit(OP_CONST, line, r, owner_->asm_.add_constant(Value::make_nil()));
     if (curr_.k != TK::END_FILE) advance();
-    return {r, TY_UNKNOWN};
+    return ExprResult::make_reg(r, TY_UNKNOWN);
 }
 
 void Parser::compile_unit(SourceManager* sm) {
@@ -518,7 +605,7 @@ void Parser::compile_unit(SourceManager* sm) {
                 while (curr_.k != TK::KEY_END && curr_.k != TK::RBRACE && curr_.k != TK::END_FILE) compile_stmt();
                 if (curr_.k == TK::RBRACE) advance(); else consume(TK::KEY_END, "Expected 'end' token after function");
 
-                int nilreg = owner_->load_const(Value::make_nil(), curr_.line);
+                int nilreg = owner_->emit_const(Value::make_nil(), curr_.line);
                 owner_->asm_.emit(OP_RETURN, curr_.line, nilreg);
             }
 
@@ -582,7 +669,7 @@ void Parser::compile_unit(SourceManager* sm) {
     else owner_->push_diag("Function 'main' not found", {0,0,0}, "");
     
 
-    int nilreg = owner_->load_const(Value::make_nil(), curr_.line);
+    int nilreg = owner_->emit_const(Value::make_nil(), curr_.line);
     owner_->asm_.emit(OP_RETURN, curr_.line, nilreg);
 
     if (!owner_->diagnostics_.empty()) {
@@ -630,12 +717,11 @@ void Parser::compile_stmt() {
                     chain.push_back({ChainOp::DOT, member, -1});
                 } else {
                     advance();
-                    auto p = compile_expr();
-                    // 0-index
-                    int negone = owner_->load_const(Value::make_int(-1), line);
-                    owner_->asm_.emit(OP_ADD, line, p.first, p.first, negone);
+                    ExprResult p = compile_expr_internal();
+                    int preg = ensure_reg(p, line);
+                    owner_->asm_.emit(OP_ADD, line, preg, preg, owner_->emit_const(Value::make_int(-1), line));
                     consume(TK::RBRACK, "Expected ']'");
-                    chain.push_back({ChainOp::LBRACK, "", p.first});
+                    chain.push_back({ChainOp::LBRACK, "", preg});
                 }
             }
 
@@ -647,7 +733,8 @@ void Parser::compile_stmt() {
                 } else {
                     advance();
 
-                    auto [rreg, rt] = compile_expr();
+                    ExprResult rv = compile_expr_internal();
+                    int rreg = ensure_reg(rv, line);
 
                     if (chain.empty()) {
                         owner_->asm_.emit(OP_MOVE, line, loc, rreg);
@@ -674,9 +761,8 @@ void Parser::compile_stmt() {
                                 }
                             }
                             ObjString* s = new ObjString(op.member);
-                            int keyreg = owner_->load_const(Value::make_obj(s), line);
+                            int keyreg = owner_->emit_const(Value::make_obj(s), line);
                             int newtmp = owner_->define_local("", TY_UNKNOWN);
-                            // choose OP_LIST_GET when base is known list, else OP_INDEX
                             if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
                                 owner_->asm_.emit(OP_LIST_GET, line, newtmp, tmp, keyreg);
                             else
@@ -686,7 +772,6 @@ void Parser::compile_stmt() {
                             continue;
                         } else {
                             int newtmp = owner_->define_local("", TY_UNKNOWN);
-                            // choose OP_LIST_GET when base is known list, else OP_INDEX
                             if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
                                 owner_->asm_.emit(OP_LIST_GET, line, newtmp, tmp, op.key_reg);
                             else
@@ -708,14 +793,12 @@ void Parser::compile_stmt() {
                                 if (fields[fi].first == last.member) { found_idx = (int)fi; break; }
                             }
                             if (found_idx >= 0) {
-                                // emit OP_STRUCT_SET: struct_reg = tmp, field_index = found_idx, value = rreg
                                 owner_->asm_.emit(OP_STRUCT_SET, line, tmp, found_idx, rreg);
                                 return;
                             }
                         }
                         ObjString* s = new ObjString(last.member);
-                        int keyreg = owner_->load_const(Value::make_obj(s), line);
-                        // final assignment: if base is list -> OP_LIST_SET, else -> OP_TABLE_SET
+                        int keyreg = owner_->emit_const(Value::make_obj(s), line);
                         if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST) {
                             owner_->asm_.emit(OP_LIST_SET, line, tmp, keyreg, rreg);
                         } else {
@@ -723,7 +806,6 @@ void Parser::compile_stmt() {
                         }
                         return;
                     } else {
-                        // final assignment with index
                         if (tmp >= 0 && tmp < (int)owner_->locals_.size() && owner_->locals_[tmp].type == TY_LIST)
                             owner_->asm_.emit(OP_LIST_SET, line, tmp, last.key_reg, rreg);
                         else
@@ -757,13 +839,14 @@ void Parser::compile_stmt() {
 
             TypeKind prev_expected = owner_->expected_return_;
             owner_->expected_return_ = (tk == TY_UNKNOWN) ? prev_expected : tk;
-            auto [r, rt] = compile_expr();
+            ExprResult res = compile_expr_internal();
+            int r = ensure_reg(res, line);
             owner_->expected_return_ = prev_expected;
 
             int user_id = -1;
             if (tk == TY_ITEM) user_id = tuid;
 
-            int slot = owner_->define_local(var_name, (tk == TY_UNKNOWN ? rt : tk), user_id);
+            int slot = owner_->define_local(var_name, (tk == TY_UNKNOWN ? res.type : tk), user_id);
             owner_->asm_.emit(OP_MOVE, line, slot, r);
             return;
         }
@@ -778,8 +861,9 @@ void Parser::compile_stmt() {
         }
         std::string name = curr_.lex; advance();
         consume(TK::ASSIGN, "Expected '=' after variable name");
-        auto [r,t] = compile_expr();
-        int v = owner_->define_local(name, t);
+        ExprResult rres = compile_expr_internal();
+        int r = ensure_reg(rres, line);
+        int v = owner_->define_local(name, rres.type);
         owner_->asm_.emit(OP_MOVE, line, v, r);
         return;
     }
@@ -787,13 +871,14 @@ void Parser::compile_stmt() {
     if (curr_.k == TK::IDENT && next_.k == TK::ASSIGN) {
         std::string name = curr_.lex;
         advance(); advance();
-        auto [r,t] = compile_expr();
+        ExprResult rres = compile_expr_internal();
+        int r = ensure_reg(rres, line);
         int v = owner_->resolve_local(name);
         if (v == -1) {
             owner_->push_diag("Unknown variable: " + name, {line, curr_.col, (int)name.size()}, owner_->current_function_);
             return;
         }
-        if (owner_->locals_[v].type != TY_UNKNOWN && t != TY_UNKNOWN && owner_->locals_[v].type != t)
+        if (owner_->locals_[v].type != TY_UNKNOWN && rres.type != TY_UNKNOWN && owner_->locals_[v].type != rres.type)
             owner_->push_diag("Assigning with incompatible type to " + name, {line, curr_.col, (int)name.size()}, owner_->current_function_);
         owner_->asm_.emit(OP_MOVE, line, v, r);
         return;
@@ -802,11 +887,12 @@ void Parser::compile_stmt() {
     if (curr_.k == TK::RETURN) {
         advance();
         if (curr_.k == TK::KEY_END || curr_.k == TK::RBRACE || curr_.k == TK::END_FILE) {
-            int nilreg = owner_->load_const(Value::make_nil(), line);
+            int nilreg = owner_->emit_const(Value::make_nil(), line);
             owner_->asm_.emit(OP_RETURN, line, nilreg);
             return;
         } else {
-            auto [r, rt] = compile_expr();
+            ExprResult res = compile_expr_internal();
+            int r = ensure_reg(res, line);
             owner_->asm_.emit(OP_RETURN, line, r);
             return;
         }
@@ -815,7 +901,8 @@ void Parser::compile_stmt() {
     if (curr_.k == TK::IF) {
         advance();
         consume(TK::LP, "Expected '(' after 'if'");
-        auto [cond_reg, cond_t] = compile_expr();
+        ExprResult cond = compile_expr_internal();
+        int cond_reg = ensure_reg(cond, line);
         consume(TK::RP, "Expected ')'");
         int else_l = owner_->asm_.make_label(), end_l = owner_->asm_.make_label();
         owner_->asm_.emit_jump(OP_JMP_FALSE, line, cond_reg, else_l);
@@ -845,7 +932,8 @@ void Parser::compile_stmt() {
         int start = owner_->asm_.make_label(), end = owner_->asm_.make_label();
         owner_->asm_.bind_label(start);
         consume(TK::LP, "Expected '(' after 'while'");
-        auto [cond_reg, cond_t] = compile_expr();
+        ExprResult cond = compile_expr_internal();
+        int cond_reg = ensure_reg(cond, line);
         consume(TK::RP, "Expected ')'");
         owner_->asm_.emit_jump(OP_JMP_FALSE, line, cond_reg, end);
         owner_->begin_scope();
@@ -857,17 +945,20 @@ void Parser::compile_stmt() {
         return;
     }
 
-    compile_expr();
+    // fallback: evaluate expression and ignore return
+    {
+        ExprResult tmp = compile_expr_internal();
+        ensure_reg(tmp, line); // ensure any consts are emitted
+    }
 }
 
-// ---------------- helpers ----------------
 int Parser::make_string_const(const std::string &s, int line) {
     ObjString* o = new ObjString(s);
-    return owner_->load_const(Value::make_obj(o), line);
+    return owner_->emit_const(Value::make_obj(o), line);
 }
 
 int Parser::make_nil_const(int line) {
-    return owner_->load_const(Value::make_nil(), line);
+    return owner_->emit_const(Value::make_nil(), line);
 }
 
 int Parser::emit_call_helper(int line, FunctionSig* fs, const std::vector<int>& arg_regs) {

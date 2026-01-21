@@ -1,0 +1,12 @@
+unit iftest
+{
+    on void main()
+        if (false)
+            print("if false")
+        else if (false)
+            print("else if false")
+        else
+            print("else")
+        end
+    end
+}

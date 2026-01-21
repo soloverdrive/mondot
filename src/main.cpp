@@ -33,8 +33,12 @@ int main(int argc, char* argv[])
         if (!f) { std::cerr << "Error when opening " << input_file << std::endl; return 1; }
         std::stringstream buffer; buffer << f.rdbuf();
         SourceManager sm(buffer.str(), input_file);
+
+        auto opts = CompilerOptions();
+        opts.max_opt_iters = 8;
+        opts.opt_level = 2;
         try {
-            Compiler comp(buffer.str());
+            Compiler comp(buffer.str(), opts);
             comp.compile_unit(&sm);
             BytecodeIO::save(output_file, comp.asm_, true);
         } catch (std::exception& e) {

@@ -37,9 +37,8 @@ namespace {
     Value builtin_print_string(int argc, const Value* argv, [[maybe_unused]] void* ctx) {
         if (argc < 1) { std::cout << "\n"; return Value::make_nil(); }
         const Value& v = argv[0];
-        if (v.is_obj() && v.as_obj()->type == OBJ_STRING) std::cout << ((ObjString*)v.as_obj())->str;
-        else std::cout << value_to_short_string(v);
-        std::cout << "\n";
+        if (v.is_obj() && v.as_obj()->type == OBJ_STRING) std::cout << ((ObjString*)v.as_obj())->str << "\n";
+        else std::cout << value_to_short_string(v) << "\n";
         return Value::make_nil();
     }
 

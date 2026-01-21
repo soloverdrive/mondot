@@ -14,6 +14,21 @@ struct ScopeGuard {
     ~ScopeGuard() { if (c) c->end_scope(); }
 };
 
+struct ExprResult {
+    int reg = -1;
+    TypeKind type = TY_UNKNOWN;
+    bool is_const = false;
+    Value const_value;
+
+    ExprResult() = default;
+    static ExprResult make_const(const Value &v, TypeKind t) {
+        ExprResult r; r.is_const = true; r.const_value = v; r.type = t; r.reg = -1; return r;
+    }
+    static ExprResult make_reg(int reg, TypeKind t) {
+        ExprResult r; r.is_const = false; r.reg = reg; r.type = t; return r;
+    }
+};
+
 class Parser {
 public:
     Parser(Compiler* owner, const std::string& src);
@@ -38,12 +53,19 @@ private:
 
     // parsing & codegen
     void prescan_functions();
-    std::pair<int, TypeKind> compile_expr(int min_prec = 0);
+
+    // public API
+    ExprResult compile_expr(int min_prec = 0);
+
+    // internal helpers
+    ExprResult compile_expr_internal(int min_prec = 0);
+    ExprResult compile_atom_internal();
+
     std::pair<TypeKind,int> resolve_type_name(const std::string &s);
-    std::pair<int, TypeKind> compile_atom();
     void compile_stmt();
 
     // helpers
+    int ensure_reg(ExprResult &er, int line);
     int make_string_const(const std::string &s, int line);
     int make_nil_const(int line);
     int emit_call_helper(int line, FunctionSig* fs, const std::vector<int>& arg_regs);

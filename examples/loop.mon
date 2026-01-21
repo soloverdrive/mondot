@@ -1,7 +1,7 @@
 unit loop
 {
     on void main()
-        number x = 100000
+        number x = 1000000
         print("start")
         
         while (x > 0)

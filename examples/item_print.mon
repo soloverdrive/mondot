@@ -1,0 +1,13 @@
+unit item_print
+{
+    item obj (string val)
+
+    on void __tostring__(this: obj)
+        return this.val
+    end
+
+    on void main()
+        obj i = create("hello world")
+        print(__tostring__(i))
+    end
+}

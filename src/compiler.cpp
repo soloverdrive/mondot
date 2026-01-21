@@ -4,8 +4,16 @@
 
 #include "builtin_registry.h"
 #include "value.h"
+#include <sstream>
 
-Compiler::Compiler(const std::string& source) : source_text_(source) {
+Compiler::Compiler(const std::string& source, const CompilerOptions& opts) : source_text_(source), options(opts) {
+    register_builtin_signatures();
+    parser_ = new Parser(this, source_text_);
+}
+
+Compiler::~Compiler() { delete parser_; }
+
+void Compiler::register_builtin_signatures() {
     for (const auto &be : BuiltinRegistry::all_entries()) {
         FunctionSig fs;
         fs.name = be.name;
@@ -13,15 +21,22 @@ Compiler::Compiler(const std::string& source) : source_text_(source) {
         fs.return_type = be.return_type;
         fs.is_builtin = true;
         fs.label_id = -1;
+        fs.internal_name = mangle_name(fs.name, fs.param_types);
         function_table_[fs.name].push_back(fs);
     }
-    parser_ = new Parser(this, source_text_);
 }
 
-Compiler::~Compiler() { delete parser_; }
+std::string Compiler::mangle_name(const std::string &name, const std::vector<TypeKind>& types) {
+    std::ostringstream ss;
+    ss << name << "#" << types.size();
+    for (auto t : types) ss << "." << (int)t;
+    return ss.str();
+}
 
 void Compiler::compile_unit(SourceManager* sm) {
     parser_->compile_unit(sm);
+    if (options.opt_level > 0)
+        asm_.run_optimizations(options.opt_level, options.max_opt_iters);
 }
 
 void Compiler::push_diag(const std::string &m, SourceLocation loc, const std::string &fn) {
@@ -38,10 +53,10 @@ int Compiler::define_local(const std::string& name, TypeKind t, int user_type_id
     return slot;
 }
 
-int Compiler::load_const(Value v, int line) {
-    int idx = asm_.add_constant(v);
-    int reg = define_local("", type_of_value(v));
-    asm_.emit(OP_CONST, line, reg, idx);
+int Compiler::emit_const(Value v, int line) {
+    int const_idx = asm_.add_constant(v);
+    int reg = define_local("", TY_UNKNOWN);
+    asm_.emit(OP_CONST, line, reg, const_idx, 0);
     return reg;
 }
 
@@ -106,6 +121,7 @@ int Compiler::register_item_type(const std::string &name, const std::string &par
     fs.label_id = -1;
     fs.is_builtin = false;
     for (auto &f : itp.fields) fs.param_types.push_back(f.second);
+    fs.internal_name = mangle_name(fs.name, fs.param_types);
     function_table_[fs.name].push_back(fs);
 
     return id;

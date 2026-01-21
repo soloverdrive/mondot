@@ -3,6 +3,7 @@
 #include "value.h"
 
 enum OpCode : uint8_t {
+    OP_NOP,
     OP_CONST, OP_MOVE, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_LT, OP_GT, OP_EQ,
     OP_JMP, OP_JMP_FALSE, OP_CALL, OP_CALL_OBJ, OP_RETURN,
     OP_TABLE_SET, OP_TABLE_NEW, OP_INDEX,
@@ -34,4 +35,11 @@ struct Assembler {
 
     int emit_call(int line, int dest_reg, int label_id, int argc);
     int emit_call_obj(int line, int dest_reg, int func_reg, int argc);
+
+    void run_optimizations(int level, int max_iters);
+
+private:
+    bool pass_constant_fold_and_propagate();
+    bool pass_peep_hole();
+    void compact_and_rewrite_labels(const std::vector<int>& removed);
 };
