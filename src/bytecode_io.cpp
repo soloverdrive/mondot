@@ -20,87 +20,87 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
         if (v.is_num()) {
             uint8_t tag = TAG_NUM;
             int64_t q = v.as_intscaled();
-            out.write((char*)&tag, 1);
-            out.write((char*)&q, sizeof(int64_t));
+            out.write(reinterpret_cast<char*>(&tag), 1);
+            out.write(reinterpret_cast<char*>(&q), sizeof(int64_t));
         } else if (v.is_bool()) {
             uint8_t tag = TAG_BOOL;
-            bool val = v.as_bool();
-            out.write((char*)&tag, 1);
-            out.write((char*)&val, sizeof(bool));
+            uint8_t val = v.as_bool() ? 1 : 0;
+            out.write(reinterpret_cast<char*>(&tag), 1);
+            out.write(reinterpret_cast<char*>(&val), sizeof(uint8_t));
         } else if (v.is_nil()) {
             uint8_t tag = TAG_NIL;
-            out.write((char*)&tag, 1);
+            out.write(reinterpret_cast<char*>(&tag), 1);
         } else if (v.is_obj()) {
             Obj* o = v.as_obj();
             if (o->type == OBJ_STRING) {
                 uint8_t tag = TAG_OBJ;
                 std::string s = ((ObjString*)o)->str;
-                out.write((char*)&tag, 1);
-                size_t len = s.size();
-                out.write((char*)&len, sizeof(size_t));
-                out.write(s.c_str(), len);
+                uint64_t len = static_cast<uint64_t>(s.size());
+                out.write(reinterpret_cast<char*>(&tag), 1);
+                out.write(reinterpret_cast<char*>(&len), sizeof(uint64_t));
+                out.write(s.c_str(), s.size());
             }
             else if (o->type == OBJ_FUNCTION) {
                 uint8_t tag = FILE_TAG_FUNC;
-                out.write((char*)&tag, 1);
+                out.write(reinterpret_cast<char*>(&tag), 1);
                 ObjFunction* of = (ObjFunction*)o;
                 int32_t bid = of->builtin_id;
-                out.write((char*)&bid, sizeof(int32_t));
-                uint8_t ret = (uint8_t)of->return_type;
-                out.write((char*)&ret, 1);
-                uint8_t argc = (uint8_t)of->param_types.size();
-                out.write((char*)&argc, 1);
+                out.write(reinterpret_cast<char*>(&bid), sizeof(int32_t));
+                uint8_t ret = static_cast<uint8_t>(of->return_type);
+                out.write(reinterpret_cast<char*>(&ret), 1);
+                uint8_t argc = static_cast<uint8_t>(of->param_types.size());
+                out.write(reinterpret_cast<char*>(&argc), 1);
                 for (auto t : of->param_types) {
-                    uint8_t tb = (uint8_t)t;
-                    out.write((char*)&tb, 1);
+                    uint8_t tb = static_cast<uint8_t>(t);
+                    out.write(reinterpret_cast<char*>(&tb), 1);
                 }
                 if (bid == -1) {
-                    size_t len = of->name.size();
-                    out.write((char*)&len, sizeof(size_t));
-                    out.write(of->name.c_str(), len);
+                    uint64_t len = static_cast<uint64_t>(of->name.size());
+                    out.write(reinterpret_cast<char*>(&len), sizeof(uint64_t));
+                    out.write(of->name.c_str(), of->name.size());
                 }
             }
             else if (o->type == OBJ_STRUCT) {
                 uint8_t tag = FILE_TAG_STRUCT;
-                out.write((char*)&tag, 1);
+                out.write(reinterpret_cast<char*>(&tag), 1);
                 ObjStruct* os = (ObjStruct*)o;
                 int32_t itemid = os->item_type_id;
-                out.write((char*)&itemid, sizeof(int32_t));
-                uint32_t fcount = (uint32_t)os->fields.size();
-                out.write((char*)&fcount, sizeof(uint32_t));
+                out.write(reinterpret_cast<char*>(&itemid), sizeof(int32_t));
+                uint32_t fcount = static_cast<uint32_t>(os->fields.size());
+                out.write(reinterpret_cast<char*>(&fcount), sizeof(uint32_t));
                 for (uint32_t i = 0; i < fcount; ++i) {
                     write_value(os->fields[i]);
                 }
             }
             else if (o->type == OBJ_LIST) {
                 uint8_t tag = FILE_TAG_LIST;
-                out.write((char*)&tag, 1);
+                out.write(reinterpret_cast<char*>(&tag), 1);
                 ObjList* ol = (ObjList*)o;
-                size_t cnt = ol->elements.size();
-                out.write((char*)&cnt, sizeof(size_t));
-                for (size_t i = 0; i < cnt; ++i) {
-                    write_value(ol->elements[i]);
+                uint64_t cnt = static_cast<uint64_t>(ol->elements.size());
+                out.write(reinterpret_cast<char*>(&cnt), sizeof(uint64_t));
+                for (uint64_t i = 0; i < cnt; ++i) {
+                    write_value(ol->elements[(size_t)i]);
                 }
             }
             else {
                 uint8_t tag = TAG_NIL;
-                out.write((char*)&tag, 1);
+                out.write(reinterpret_cast<char*>(&tag), 1);
             }
         } else {
             uint8_t tag = TAG_NIL;
-            out.write((char*)&tag, 1);
+            out.write(reinterpret_cast<char*>(&tag), 1);
         }
     };
 
-    size_t n_consts = as.constants.size();
-    out.write((char*)&n_consts, sizeof(size_t));
+    uint64_t n_consts = static_cast<uint64_t>(as.constants.size());
+    out.write(reinterpret_cast<char*>(&n_consts), sizeof(uint64_t));
     for (const auto& v : as.constants) {
         write_value(v);
     }
 
-    size_t n_code = as.code.size();
-    out.write((char*)&n_code, sizeof(size_t));
-    out.write((char*)as.code.data(), n_code * sizeof(Instr));
+    uint64_t n_code = static_cast<uint64_t>(as.code.size());
+    out.write(reinterpret_cast<char*>(&n_code), sizeof(uint64_t));
+    out.write(reinterpret_cast<const char*>(as.code.data()), n_code * sizeof(Instr));
     std::cout << "Compiled successfully for " << filename << std::endl;
 
     if (alsoVisual) {
@@ -113,43 +113,69 @@ void BytecodeIO::save(const std::string& filename, Assembler& as, bool alsoVisua
 void BytecodeIO::load(const std::string& filename, Assembler& as) {
     std::ifstream in(filename, std::ios::binary);
     if (!in) throw std::runtime_error("File not found: " + filename);
+
     char magic[4];
     in.read(magic, 4);
-    if (std::strncmp(magic, "MDOT", 4) != 0) throw std::runtime_error("Invalid file format (Magic Header)");
+    if (!in || std::strncmp(magic, "MDOT", 4) != 0)
+        throw std::runtime_error("Invalid file format (Magic Header)");
 
-    static constexpr uint8_t FILE_TAG_STRUCT = 0x11;
+    auto read_exact = [&](char* buf, std::size_t n) {
+        in.read(buf, static_cast<std::streamsize>(n));
+        if (!in) throw std::runtime_error("Unexpected EOF or read error while loading bytecode");
+    };
 
     auto read_value = [&](auto&& self) -> Value {
-        uint8_t tag; in.read((char*)&tag, 1);
+        uint8_t tag;
+        read_exact(reinterpret_cast<char*>(&tag), 1);
+
         if (tag == TAG_NUM) {
-            int64_t q; in.read((char*)&q, sizeof(int64_t));
+            int64_t q;
+            read_exact(reinterpret_cast<char*>(&q), sizeof(int64_t));
             return Value::make_intscaled(q);
         }
         else if (tag == TAG_BOOL) {
-            bool b; in.read((char*)&b, sizeof(bool));
-            return Value::make_bool(b);
+            uint8_t b;
+            read_exact(reinterpret_cast<char*>(&b), 1);
+            return Value::make_bool(b != 0);
         }
         else if (tag == TAG_NIL) {
             return Value::make_nil();
         }
         else if (tag == TAG_OBJ) {
-            size_t len; in.read((char*)&len, sizeof(size_t));
-            std::string s(len, '\0');
-            in.read(&s[0], len);
-            return Value::make_obj(new ObjString(s));
+            uint64_t len;
+            read_exact(reinterpret_cast<char*>(&len), sizeof(uint64_t));
+            if (len > (1ULL<<31)) throw std::runtime_error("String constant too large");
+            std::string s;
+            s.resize(static_cast<size_t>(len));
+            if (len) read_exact(&s[0], static_cast<size_t>(len));
+            return Value::make_obj(new ObjString(std::move(s)));
         }
         else if (tag == FILE_TAG_FUNC) {
-            int32_t bid; in.read((char*)&bid, sizeof(int32_t));
-            uint8_t ret; in.read((char*)&ret, 1);
-            uint8_t argc; in.read((char*)&argc, 1);
+            int32_t bid;
+            read_exact(reinterpret_cast<char*>(&bid), sizeof(int32_t));
+            uint8_t ret;
+            read_exact(reinterpret_cast<char*>(&ret), 1);
+            uint8_t argc;
+            read_exact(reinterpret_cast<char*>(&argc), 1);
+
             std::vector<TypeKind> params;
             params.reserve(argc);
-            for (int j=0;j<argc;j++) { uint8_t tb; in.read((char*)&tb,1); params.push_back((TypeKind)tb); }
+            for (uint8_t j = 0; j < argc; ++j) {
+                uint8_t tb;
+                read_exact(reinterpret_cast<char*>(&tb), 1);
+                params.push_back((TypeKind)tb);
+            }
+
             std::string name;
             if (bid == -1) {
-                size_t len; in.read((char*)&len, sizeof(size_t));
-                name.assign(len, '\0'); in.read(&name[0], len);
+                uint64_t len;
+                read_exact(reinterpret_cast<char*>(&len), sizeof(uint64_t));
+                if (len) {
+                    name.resize(static_cast<size_t>(len));
+                    read_exact(&name[0], static_cast<size_t>(len));
+                }
             }
+
             if (bid >= 0) {
                 const BuiltinEntry* e = BuiltinRegistry::get_entry(bid);
                 if (e) {
@@ -157,6 +183,7 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
                     return Value::make_obj(of);
                 }
             }
+
             if (!name.empty()) {
                 int id = BuiltinRegistry::lookup_name(name, params);
                 if (id >= 0) {
@@ -167,11 +194,14 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
                     }
                 }
             }
+
             return Value::make_nil();
         }
         else if (tag == FILE_TAG_STRUCT) {
-            int32_t itemid; in.read((char*)&itemid, sizeof(int32_t));
-            uint32_t fcount; in.read((char*)&fcount, sizeof(uint32_t));
+            int32_t itemid;
+            read_exact(reinterpret_cast<char*>(&itemid), sizeof(int32_t));
+            uint32_t fcount;
+            read_exact(reinterpret_cast<char*>(&fcount), sizeof(uint32_t));
             ObjStruct* os = new ObjStruct(itemid);
             os->fields.resize(fcount);
             for (uint32_t i = 0; i < fcount; ++i) {
@@ -182,13 +212,14 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
             return Value::make_obj(os);
         }
         else if (tag == FILE_TAG_LIST) {
-            size_t cnt; in.read((char*)&cnt, sizeof(size_t));
+            uint64_t cnt;
+            read_exact(reinterpret_cast<char*>(&cnt), sizeof(uint64_t));
             ObjList* ol = new ObjList();
-            ol->elements.resize(cnt);
-            for (size_t i = 0; i < cnt; ++i) {
+            ol->elements.resize(static_cast<size_t>(cnt));
+            for (uint64_t i = 0; i < cnt; ++i) {
                 Value ev = self(self);
-                ol->elements[i] = ev;
-                retain(ol->elements[i]);
+                ol->elements[(size_t)i] = ev;
+                retain(ol->elements[(size_t)i]);
             }
             return Value::make_obj(ol);
         }
@@ -196,17 +227,20 @@ void BytecodeIO::load(const std::string& filename, Assembler& as) {
             throw std::runtime_error("Unknown constant tag in bytecode (load)");
     };
 
-    size_t n_consts;
-    in.read((char*)&n_consts, sizeof(size_t));
-    for (size_t i = 0; i < n_consts; ++i) {
+    uint64_t n_consts;
+    read_exact(reinterpret_cast<char*>(&n_consts), sizeof(uint64_t));
+    for (uint64_t i = 0; i < n_consts; ++i) {
         Value v = read_value(read_value);
         as.add_constant(v);
     }
 
-    size_t n_code;
-    in.read((char*)&n_code, sizeof(size_t));
-    as.code.resize(n_code);
-    in.read((char*)as.code.data(), n_code * sizeof(Instr));
+    uint64_t n_code;
+    read_exact(reinterpret_cast<char*>(&n_code), sizeof(uint64_t));
+    if (n_code > (1ULL<<31)) throw std::runtime_error("Bytecode too large");
+    as.code.resize(static_cast<size_t>(n_code));
+    if (n_code) {
+        read_exact(reinterpret_cast<char*>(as.code.data()), static_cast<size_t>(n_code) * sizeof(Instr));
+    }
 }
 
 std::string BytecodeIO::escape_string(const std::string& s) {

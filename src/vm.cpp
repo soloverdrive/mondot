@@ -16,6 +16,7 @@ static inline Value from_intscaled(int64_t q) {
 }
 
 void VM::run() {
+    frames.clear();
     frames.push_back({-1, 0, -1});
     ip = 0;
     Instr* instructions = code.data();
@@ -23,14 +24,25 @@ void VM::run() {
     Value* consts = constants.data();
     const int FRAME_SIZE = 256;
 
+    if (stack.size() < 4096) stack.resize(4096);
+
     while (ip < code_size) {
         Instr ins = instructions[ip];
         int base = frames.back().base_reg;
+
+        auto ensure_stack_capacity = [&](size_t needed) {
+            if (needed >= stack.size()) {
+                size_t newsize = stack.size();
+                while (newsize <= needed) newsize = newsize * 2;
+                stack.resize(newsize, Value::make_nil());
+            }
+        };
 
         switch (ins.op) {
             case OP_CONST: {
                 // ins.a = dest, ins.b = const index
                 int dst = base + ins.a;
+                ensure_stack_capacity(dst);
                 release(stack[dst]);
                 stack[dst] = consts[ins.b];
                 retain(stack[dst]);
@@ -137,6 +149,7 @@ void VM::run() {
                 int dest_abs = caller_base + dest_rel;
 
                 int new_base = caller_base + FRAME_SIZE;
+                ensure_stack_capacity(new_base + std::max(argc, FRAME_SIZE) + 8);
 
                 for (int i = 0; i < argc; i++) {
                     Value v = stack[caller_base + dest_rel + 1 + i];
@@ -160,11 +173,14 @@ void VM::run() {
                 int func_abs = caller_base + func_rel;
                 int arg0_abs = dest_abs + 1;
 
+                ensure_stack_capacity(dest_abs);
+                ensure_stack_capacity(func_abs);
+                ensure_stack_capacity(arg0_abs + argc);
+
                 Value fv = stack[func_abs];
                 if (!fv.is_obj() || fv.as_obj()->type != OBJ_FUNCTION) {
                     release(stack[dest_abs]);
                     stack[dest_abs] = Value::make_nil();
-                    retain(stack[dest_abs]);
                     break;
                 }
                 ObjFunction* of = (ObjFunction*)fv.as_obj();
@@ -174,7 +190,6 @@ void VM::run() {
                     if (!be || !be->fn) {
                         release(stack[dest_abs]);
                         stack[dest_abs] = Value::make_nil();
-                        retain(stack[dest_abs]);
                         break;
                     }
                     const Value* args = (argc > 0) ? &stack[arg0_abs] : nullptr;
@@ -186,7 +201,6 @@ void VM::run() {
                 } else {
                     release(stack[dest_abs]);
                     stack[dest_abs] = Value::make_nil();
-                    retain(stack[dest_abs]);
                     break;
                 }
             }
@@ -234,6 +248,9 @@ void VM::run() {
                 int tbl_reg = base + ins.a;
                 int key_reg = base + ins.b;
                 int val_reg = base + ins.c;
+
+                ensure_stack_capacity(tbl_reg);
+
                 Value tblv = stack[tbl_reg];
                 if (!tblv.is_obj() || tblv.as_obj()->type != OBJ_TABLE) {
                     ObjTable* tnew = new ObjTable();
@@ -248,7 +265,7 @@ void VM::run() {
                 Value val = stack[val_reg];
                 bool replaced = false;
                 for (auto &kv : tbl->entries) {
-                    if (kv.first.raw == key.raw) {
+                    if (value_equal(kv.first, key)) {
                         release(kv.second);
                         kv.second = val;
                         retain(kv.second);
@@ -268,6 +285,10 @@ void VM::run() {
                 int dest = base + ins.a;
                 int tbl_reg = base + ins.b;
                 int key_reg = base + ins.c;
+                ensure_stack_capacity(dest);
+                ensure_stack_capacity(tbl_reg);
+                ensure_stack_capacity(key_reg);
+
                 Value tblv = stack[tbl_reg];
                 Value result = Value::make_nil();
                 if (tblv.is_obj() && tblv.as_obj()->type == OBJ_TABLE) {
@@ -275,16 +296,15 @@ void VM::run() {
                     Value key = stack[key_reg];
                     bool found = false;
                     for (auto &kv : tbl->entries) {
-                        if (kv.first.raw == key.raw) {
+                        if (value_equal(kv.first, key)) {
                             result = kv.second;
                             found = true;
                             break;
                         }
                     }
                     if (!found) result = Value::make_nil();
-                }
-                else result = Value::make_nil();
-                
+                } else result = Value::make_nil();
+
                 release(stack[dest]);
                 stack[dest] = result;
                 retain(stack[dest]);

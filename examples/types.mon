@@ -1,0 +1,10 @@
+unit types
+{
+    on void main()
+        number maxintval    = 268435455
+        number maxnumberval = 268435455.999999
+        number minintval    = -268435456
+        number minnumberval = -268435456.000000
+        number smallnumber  = 0.000001
+    end
+}
